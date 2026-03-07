@@ -1,0 +1,4 @@
+# Ignore docker-compose .env files
+.env
+.env.*
+docker-compose/.env
