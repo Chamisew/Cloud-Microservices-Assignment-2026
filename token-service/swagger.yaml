@@ -1,0 +1,476 @@
+openapi: 3.0.3
+info:
+  title: Token Service API
+  description: |
+    Token Service for Smart Queue Management System
+    
+    This microservice manages token generation and management for queue operations.
+    
+    **Core Integration Flow:**
+    1. POST /api/tokens/generate receives request from Queue Service
+    2. Generates and saves token to MongoDB Atlas
+    3. CRUCIAL: Calls Notification Service to send alert
+    4. Returns token information to Queue Service
+    
+    **Security Features:**
+    - Environment-based MongoDB connection
+    - Service-to-service authentication
+    - Input validation and error handling
+    - Retry mechanism with exponential backoff
+    - Circuit breaker pattern for resilience
+  version: 1.0.0
+  contact:
+    name: Smart Queue Management Team
+    email: team@smartqueue.local
+
+servers:
+  - url: http://localhost:5003
+    description: Local development server
+  - url: https://token-service.prod.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service status and Notification Service connectivity
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: Token Service
+                  timestamp:
+                    type: string
+                    format: date-time
+                  database:
+                    type: string
+                    example: connected
+                  notification_service:
+                    type: string
+                    example: connected
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unhealthy
+                  service:
+                    type: string
+                    example: Token Service
+                  error:
+                    type: string
+
+  /api/tokens/generate:
+    post:
+      summary: Generate new queue token (Core Integration Endpoint)
+      description: |
+        Generate new queue token with complete integration flow:
+        1. Validate and process token request
+        2. Generate unique token number and ID
+        3. Save token details to MongoDB Atlas
+        4. CRUCIAL: Call Notification Service to send alert
+        5. Return complete token information
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - queue_id
+                - user_name
+                - queue_name
+              properties:
+                user_id:
+                  type: string
+                  description: User ID (must exist)
+                  example: "507f1f77bcf86cd799439011"
+                queue_id:
+                  type: string
+                  description: Queue ID (must exist)
+                  example: "507f1f77bcf86cd799439012"
+                user_name:
+                  type: string
+                  description: User name
+                  minLength: 2
+                  maxLength: 100
+                  example: "John Doe"
+                queue_name:
+                  type: string
+                  description: Queue name
+                  minLength: 3
+                  maxLength: 50
+                  example: "General Service"
+                service_type:
+                  type: string
+                  description: Service type (general, priority, vip, emergency)
+                  enum: [general, priority, vip, emergency]
+                  default: general
+                  example: "priority"
+      responses:
+        '201':
+          description: Token generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token_id:
+                    type: string
+                    example: "507f1f77bcf86cd799439013"
+                  token_number:
+                    type: string
+                    example: "Q001"
+                  status:
+                    type: string
+                    example: "active"
+                  service_type:
+                    type: string
+                    example: "priority"
+                  priority:
+                    type: integer
+                    example: 2
+                  expires_at:
+                    type: string
+                    format: date-time
+                  created_at:
+                    type: string
+                    format: date-time
+                  notification_sent:
+                    type: boolean
+                    example: true
+                  notification_id:
+                    type: string
+                    example: "notif_123"
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/tokens/{token_id}:
+    get:
+      summary: Retrieve token details
+      description: Get detailed information about a specific token
+      parameters:
+        - name: token_id
+          in: path
+          required: true
+          description: Token ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token_id:
+                    type: string
+                  token_number:
+                    type: string
+                  user_id:
+                    type: string
+                  queue_id:
+                    type: string
+                  user_name:
+                    type: string
+                  queue_name:
+                    type: string
+                  service_type:
+                    type: string
+                  status:
+                    type: string
+                  priority:
+                    type: integer
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                  expires_at:
+                    type: string
+                    format: date-time
+                  called_at:
+                    type: string
+                    format: date-time
+                  completed_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid token ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid token ID format"
+        '404':
+          description: Token not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Token not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/tokens/user/{user_id}:
+    get:
+      summary: Retrieve user tokens
+      description: Get all tokens for a specific user
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User tokens retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        token_id:
+                          type: string
+                        token_number:
+                          type: string
+                        queue_name:
+                          type: string
+                        service_type:
+                          type: string
+                        status:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        expires_at:
+                          type: string
+                          format: date-time
+        '400':
+          description: Invalid user ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/tokens/status/{token_id}:
+    put:
+      summary: Update token status
+      description: Update token status (called, completed, etc.)
+      parameters:
+        - name: token_id
+          in: path
+          required: true
+          description: Token ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  description: New token status
+                  enum: [active, called, serving, completed, expired, cancelled]
+                  example: "called"
+                additional_data:
+                  type: object
+                  description: Additional data for status update
+                  example: {"counter_number": 3}
+      responses:
+        '200':
+          description: Token status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token_id:
+                    type: string
+                  token_number:
+                    type: string
+                  user_name:
+                    type: string
+                  queue_name:
+                    type: string
+                  status:
+                    type: string
+                  called_at:
+                    type: string
+                    format: date-time
+                  completed_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '404':
+          description: Token not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Token not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+components:
+  schemas:
+    Token:
+      type: object
+      properties:
+        token_id:
+          type: string
+          description: Unique token identifier
+        token_number:
+          type: string
+          description: Human-readable token number (e.g., Q001)
+        token_prefix:
+          type: string
+          description: Token prefix for categorization
+        user_id:
+          type: string
+          description: Associated user ID
+        queue_id:
+          type: string
+          description: Associated queue ID
+        user_name:
+          type: string
+          description: User name
+        queue_name:
+          type: string
+          description: Queue name
+        service_type:
+          type: string
+          description: Service type (general, priority, vip, emergency)
+        status:
+          type: string
+          description: Token status
+          enum: [active, called, serving, completed, expired, cancelled]
+        priority:
+          type: integer
+          description: Token priority level (1-4)
+        created_at:
+          type: string
+          format: date-time
+          description: Token creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Token last update timestamp
+        expires_at:
+          type: string
+          format: date-time
+          description: Token expiration timestamp
+        called_at:
+          type: string
+          format: date-time
+          description: When token was called
+        completed_at:
+          type: string
+          format: date-time
+          description: When token service was completed
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Tokens
+    description: Token management operations
+  - name: Integration
+    description: Service-to-service integration endpoints
+  - name: Health
+    description: Service health monitoring
