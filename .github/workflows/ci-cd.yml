@@ -1,0 +1,25 @@
+name: Build and Push to Azure
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Login to Azure Container Registry
+        run: echo ${{ secrets.AZURE_REGISTRY_PASSWORD }} | docker login ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }} -u ${{ secrets.AZURE_REGISTRY_USERNAME }} --password-stdin
+
+      - name: Build User Service Image
+        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/user-service:latest ./user-service
+
+      - name: Push User Service Image
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/user-service:latest
+
+      
