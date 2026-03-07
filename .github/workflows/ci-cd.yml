@@ -27,5 +27,5 @@ jobs:
         run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/queue-service:latest ./queue-service  
 
       - name: Push Queue Service Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/queue-service:
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/queue-service:latest  
       
