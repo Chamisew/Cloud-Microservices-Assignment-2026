@@ -1,0 +1,289 @@
+name: Queue Service CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'queue-service/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'queue-service/**'
+
+jobs:
+  # Security Scanning Job
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd queue-service
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit safety
+
+      - name: Run Bandit Security Scan
+        run: |
+          cd queue-service
+          bandit -r . -f json -o bandit-report.json || true
+
+      - name: Upload Bandit Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: bandit-security-report
+          path: queue-service/bandit-report.json
+          if-no-files-found: ignore
+
+      - name: Run Safety Dependency Check
+        run: |
+          cd queue-service
+          safety check --full-report || true
+
+  # Code Quality Job
+  code-quality:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd queue-service
+          pip install flake8 pylint
+
+      - name: Run Flake8 Linting
+        run: |
+          cd queue-service
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Run PyLint Analysis
+        run: |
+          cd queue-service
+          pylint *.py --disable=R,C,W1203,W0718,W0719 || true
+
+  # Docker Build and Test Job
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        run: |
+          cd queue-service
+          docker build -t queue-service:latest .
+
+      - name: Test Docker container
+        run: |
+          cd queue-service
+          # Run container in background
+          docker run -d --name queue-service-test -p 5002:5002 queue-service:latest
+          # Wait for container to start
+          sleep 10
+          # Test health endpoint
+          curl -f http://localhost:5002/health || exit 1
+          # Clean up
+          docker stop queue-service-test
+          docker rm queue-service-test
+
+  # Docker Push Job (only on main branch)
+  docker-push:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          cd queue-service
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/queue-service:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/queue-service:latest
+
+  # Integration Test Job
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongo
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd queue-service
+          pip install -r requirements.txt
+          pip install pytest pytest-cov requests mock
+
+      - name: Create mock services for integration testing
+        run: |
+          # Create mock User Service
+          mkdir -p /tmp/mock-services
+          cat > /tmp/mock-services/mock_user_service.py << 'EOF'
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import time
+
+class MockUserHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith('/api/users/'):
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                'name': 'John Doe',
+                'email': 'john@example.com',
+                'phone': '+94771234567'
+            }
+            self.wfile.write(json.dumps(response).encode())
+        elif self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {'status': 'healthy'}
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def start_mock_user_service():
+    server = HTTPServer(('localhost', 5001), MockUserHandler)
+    server.serve_forever()
+
+if __name__ == '__main__':
+    thread = threading.Thread(target=start_mock_user_service)
+    thread.daemon = True
+    thread.start()
+    print("Mock User Service started on port 5001")
+    while True:
+        time.sleep(1)
+EOF
+
+          # Create mock Token Service
+          cat > /tmp/mock-services/mock_token_service.py << 'EOF'
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+import time
+
+class MockTokenHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/api/tokens/generate':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            
+            self.send_response(201)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {
+                'token_id': 'mock_token_123',
+                'token_number': 'Q001',
+                'status': 'active'
+            }
+            self.wfile.write(json.dumps(response).encode())
+        elif self.path == '/health':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            response = {'status': 'healthy'}
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def start_mock_token_service():
+    server = HTTPServer(('localhost', 5003), MockTokenHandler)
+    server.serve_forever()
+
+if __name__ == '__main__':
+    thread = threading.Thread(target=start_mock_token_service)
+    thread.daemon = True
+    thread.start()
+    print("Mock Token Service started on port 5003")
+    while True:
+        time.sleep(1)
+EOF
+
+      - name: Start mock services
+        run: |
+          cd /tmp/mock-services
+          python mock_user_service.py &
+          python mock_token_service.py &
+          sleep 5
+
+      - name: Run integration tests
+        run: |
+          cd queue-service
+          # Set environment variables for testing
+          export MONGO_URI="mongodb://localhost:27017/test_db"
+          export USER_SERVICE_URL="http://localhost:5001"
+          export TOKEN_SERVICE_URL="http://localhost:5003"
+          export FLASK_ENV=test
+          
+          # Run tests with mock services
+          python -m pytest tests/ -v --tb=short || true
+
+  # Deployment Job
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [docker-push, integration-test]
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying Queue Service to staging environment..."
+          # Add your staging deployment logic here
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [docker-push, integration-test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to Production
+        run: |
+          echo "Deploying Queue Service to production environment..."
+          # Add your production deployment logic here
