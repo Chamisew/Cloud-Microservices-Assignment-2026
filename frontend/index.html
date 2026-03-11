@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Queue - Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [v-cloak] { display: none; }
+        .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans text-gray-900">
+    <div id="app" v-cloak>
+        <!-- Navigation -->
+        <nav class="bg-white shadow-sm sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16 items-center">
+                    <div class="flex items-center space-x-2">
+                        <div class="gradient-bg p-2 rounded-lg text-white">
+                            <i class="fas fa-microchip text-xl"></i>
+                        </div>
+                        <span class="text-xl font-bold bg-clip-text text-transparent gradient-bg">SmartQueue Admin v1.0.1</span>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <a href="users.html" class="text-sm font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-4 py-2 rounded-lg transition-all">
+                            <i class="fas fa-user-cog mr-2"></i>User Explorer
+                        </a>
+                        <a href="queues.html" class="text-sm font-bold text-sky-600 hover:text-sky-800 bg-sky-50 px-4 py-2 rounded-lg transition-all">
+                            <i class="fas fa-layer-group mr-2"></i>Queue Explorer
+                        </a>
+                        <a href="tokens.html" class="text-sm font-bold text-amber-600 hover:text-amber-800 bg-amber-50 px-4 py-2 rounded-lg transition-all">
+                            <i class="fas fa-ticket-alt mr-2"></i>Token Explorer
+                        </a>
+                        <a href="notifications.html" class="text-sm font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 px-4 py-2 rounded-lg transition-all">
+                            <i class="fas fa-bell mr-2"></i>Notification Explorer
+                        </a>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" :class="apiHealthy ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                            <i class="fas fa-circle text-[8px] mr-1" :class="{'animate-pulse': !apiHealthy}"></i>
+                            {{ apiHealthy ? 'System Online' : 'System Offline' }}
+                        </span>
+                    </div>
+                </div>
+                <!-- Tabs -->
+                <div class="flex space-x-8 overflow-x-auto no-scrollbar">
+                    <button v-for="tab in tabs" :key="tab.id" @click="activeTab = tab.id" 
+                        class="py-4 px-1 text-sm font-medium whitespace-nowrap transition-colors"
+                        :class="activeTab === tab.id ? 'tab-active' : 'text-gray-500 hover:text-gray-700'">
+                        <i :class="tab.icon" class="mr-2"></i>{{ tab.name }}
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- Loading State -->
+            <div v-if="loading" class="flex flex-col items-center justify-center py-20">
+                <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500"></div>
+                <p class="mt-4 text-gray-500 font-medium">Loading data...</p>
+            </div>
+
+            <!-- Dashboard Content -->
+            <div v-else class="space-y-6">
+                
+                <!-- USER SERVICE TAB -->
+                <div v-if="activeTab === 'users'" class="space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-2xl font-bold">User Management</h2>
+                        <button @click="openModal('user')" class="gradient-bg text-white px-4 py-2 rounded-lg shadow-md hover:opacity-90 transition-all">
+                            <i class="fas fa-plus mr-2"></i>Add User
+                        </button>
+                    </div>
+                    
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <tr v-for="user in users" :key="user.id || user._id">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900">{{ user.name }}</div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm text-gray-900">{{ user.email }}</div>
+                                        <div class="text-sm text-gray-500">{{ user.phone }}</div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {{ formatDate(user.created_at) }}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                                        <button @click="openModal('user', 'edit', user)" class="text-indigo-600 hover:text-indigo-900"><i class="fas fa-edit"></i></button>
+                                        <button @click="deleteItem('user', user.id || user._id)" class="text-red-600 hover:text-red-900"><i class="fas fa-trash"></i></button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- QUEUE SERVICE TAB -->
+                <div v-if="activeTab === 'queues'" class="space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-2xl font-bold">Queue Management</h2>
+                        <button @click="openModal('queue')" class="gradient-bg text-white px-4 py-2 rounded-lg shadow-md hover:opacity-90 transition-all">
+                            <i class="fas fa-plus mr-2"></i>Create Queue
+                        </button>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div v-for="queue in queues" :key="queue.id || queue._id" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <h3 class="text-lg font-bold">{{ queue.name }}</h3>
+                                </div>
+                                <span class="px-2 py-1 bg-green-100 text-green-800 text-[10px] rounded uppercase font-bold">{{ queue.status }}</span>
+                            </div>
+                            <p class="text-sm text-gray-500 mb-4 h-10 overflow-hidden">{{ queue.description }}</p>
+                            <div class="grid grid-cols-2 gap-4 mb-4">
+                                <div class="bg-gray-50 p-2 rounded-lg text-center">
+                                    <div class="text-xs text-gray-400 uppercase">Current</div>
+                                    <div class="text-xl font-bold text-indigo-600">{{ queue.current_count }}</div>
+                                </div>
+                                <div class="bg-gray-50 p-2 rounded-lg text-center">
+                                    <div class="text-xs text-gray-400 uppercase">Wait Time</div>
+                                    <div class="text-xl font-bold text-amber-500">{{ queue.average_wait_time }}m</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-end space-x-3">
+                                <button @click="deleteItem('queue', queue.id || queue._id)" class="text-red-500 text-sm font-medium hover:underline">Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TOKEN SERVICE TAB -->
+                <div v-if="activeTab === 'tokens'" class="space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-2xl font-bold">Token Operations</h2>
+                        <button @click="openModal('token')" class="gradient-bg text-white px-4 py-2 rounded-lg shadow-md hover:opacity-90 transition-all">
+                            <i class="fas fa-ticket-alt mr-2"></i>Manual Token
+                        </button>
+                    </div>
+                    
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Token</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User/Queue</th>
+                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <tr v-for="token in tokens" :key="token.token_id">
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-lg font-black text-indigo-600">{{ token.token_number }}</div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <div class="text-sm font-medium text-gray-900">{{ token.user_name }}</div>
+                                        <div class="text-xs text-gray-500">{{ token.queue_name }}</div>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <select @change="updateTokenStatus(token.token_id, $event.target.value)" 
+                                            class="text-xs font-bold py-1 px-2 rounded-full border-0 outline-none"
+                                            :class="{
+                                                'bg-green-100 text-green-800': token.status === 'active',
+                                                'bg-blue-100 text-blue-800': token.status === 'called',
+                                                'bg-purple-100 text-purple-800': token.status === 'serving',
+                                                'bg-gray-100 text-gray-800': token.status === 'completed'
+                                            }">
+                                            <option v-for="s in ['active', 'called', 'serving', 'completed', 'expired', 'cancelled']" 
+                                                :value="s" :selected="token.status === s">{{ s.toUpperCase() }}</option>
+                                        </select>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- NOTIFICATION SERVICE TAB -->
+                <div v-if="activeTab === 'notifications'" class="space-y-6">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-2xl font-bold">Notifications Log</h2>
+                        <button @click="refreshData" class="text-gray-500 hover:text-indigo-600"><i class="fas fa-sync-alt"></i></button>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div v-for="note in notifications" :key="note.notification_id" 
+                            class="bg-white p-4 rounded-xl border-l-4 shadow-sm"
+                            :class="{
+                                'border-indigo-500': note.type === 'token_generated',
+                                'border-amber-500': note.type === 'token_called',
+                                'border-green-500': note.type === 'queue_update'
+                            }">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <span class="text-[10px] font-bold uppercase text-gray-400 tracking-widest">{{ note.type.replace('_', ' ') }}</span>
+                                    <p class="text-sm font-medium mt-1">{{ note.message }}</p>
+                                </div>
+                                <span class="text-[10px] text-gray-400">{{ formatDate(note.created_at) }}</span>
+                            </div>
+                            <div class="mt-2 flex space-x-4 text-[10px] text-gray-500">
+                                <span><i class="fas fa-user mr-1"></i>{{ note.user_name }}</span>
+                                <span><i class="fas fa-layer-group mr-1"></i>{{ note.queue_name }}</span>
+                                <span><i class="fas fa-hashtag mr-1"></i>{{ note.token_number }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+
+        <!-- Modal -->
+        <div v-if="modal.show" class="fixed inset-0 z-[100] overflow-y-auto">
+            <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                <div class="fixed inset-0 transition-opacity" aria-hidden="true" @click="modal.show = false">
+                    <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
+                <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                <div class="inline-block align-bottom bg-white rounded-2xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                    <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                        <h3 class="text-lg leading-6 font-bold text-gray-900 mb-4">
+                            {{ modal.mode === 'edit' ? 'Edit' : 'Create New' }} {{ (modal.type || '').toUpperCase() }}
+                        </h3>
+                        
+                        <!-- User Form -->
+                        <div v-if="modal.type === 'user'" class="space-y-4">
+                            <input v-model="form.name" placeholder="Name" class="w-full px-4 py-2 border rounded-lg">
+                            <input v-model="form.email" placeholder="Email" class="w-full px-4 py-2 border rounded-lg">
+                            <input v-model="form.phone" placeholder="Phone (+94...)" class="w-full px-4 py-2 border rounded-lg">
+                        </div>
+                        
+                        <!-- Queue Form -->
+                        <div v-if="modal.type === 'queue'" class="space-y-4">
+                            <input v-model="form.name" placeholder="Queue Name" class="w-full px-4 py-2 border rounded-lg">
+                            <textarea v-model="form.description" placeholder="Description" class="w-full px-4 py-2 border rounded-lg"></textarea>
+                            <input v-model.number="form.max_capacity" type="number" placeholder="Max Capacity" class="w-full px-4 py-2 border rounded-lg">
+                        </div>
+
+                        <!-- Token Form -->
+                        <div v-if="modal.type === 'token'" class="space-y-4">
+                            <select v-model="form.user_id" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="">Select User</option>
+                                <option v-for="u in users" :value="u.id || u._id">{{ u.name }}</option>
+                            </select>
+                            <select v-model="form.queue_id" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="">Select Queue</option>
+                                <option v-for="q in queues" :value="q.id || q._id">{{ q.name }}</option>
+                            </select>
+                            <select v-model="form.service_type" class="w-full px-4 py-2 border rounded-lg">
+                                <option value="general">General</option>
+                                <option value="priority">Priority</option>
+                                <option value="vip">VIP</option>
+                                <option value="emergency">Emergency</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        <button @click="saveItem" class="w-full inline-flex justify-center rounded-lg border border-transparent shadow-sm px-4 py-2 gradient-bg text-base font-medium text-white hover:opacity-90 sm:ml-3 sm:w-auto sm:text-sm">
+                            Save
+                        </button>
+                        <button @click="modal.show = false" class="mt-3 w-full inline-flex justify-center rounded-lg border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <div v-if="toast.show" class="fixed bottom-8 right-8 z-[100]">
+            <div :class="toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'" class="text-white px-6 py-3 rounded-xl shadow-2xl flex items-center space-x-3">
+                <i :class="toast.type === 'error' ? 'fas fa-exclamation-circle' : 'fas fa-check-circle'"></i>
+                <span>{{ toast.message }}</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        const API = 'http://localhost:8080/api';
+
+        createApp({
+            setup() {
+                const activeTab = ref('users');
+                const loading = ref(true);
+                const apiHealthy = ref(false);
+                const users = ref([]);
+                const queues = ref([]);
+                const tokens = ref([]);
+                const notifications = ref([]);
+                
+                const tabs = [
+                    { id: 'users', name: 'Users', icon: 'fas fa-user' },
+                    { id: 'queues', name: 'Queues', icon: 'fas fa-layer-group' },
+                    { id: 'tokens', name: 'Tokens', icon: 'fas fa-ticket-alt' },
+                    { id: 'notifications', name: 'Notifications', icon: 'fas fa-bell' }
+                ];
+
+                const modal = ref({ show: false, type: 'user', mode: 'create', data: null });
+                const form = ref({});
+                const toast = ref({ show: false, message: '', type: 'success' });
+
+                const showToast = (message, type = 'success') => {
+                    toast.value = { show: true, message, type };
+                    setTimeout(() => toast.value.show = false, 3000);
+                };
+
+                const refreshData = async () => {
+                    try {
+                        const [u, q, t, n] = await Promise.all([
+                            axios.get(`${API}/users`),
+                            axios.get(`${API}/queues`),
+                            axios.get(`${API}/tokens`),
+                            axios.get(`${API}/notifications`)
+                        ]);
+                        users.value = u.data.users || [];
+                        queues.value = q.data.queues || [];
+                        tokens.value = t.data.tokens || [];
+                        notifications.value = n.data.notifications || [];
+                        
+                        apiHealthy.value = true;
+                    } catch (e) {
+                        console.error('Data refresh failed', e);
+                        apiHealthy.value = false;
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const openModal = (type, mode = 'create', data = null) => {
+                    modal.value = { show: true, type, mode, data };
+                    form.value = data ? { ...data } : (type === 'queue' ? { max_capacity: 50 } : (type === 'token' ? { service_type: 'general' } : {}));
+                };
+
+                const saveItem = async () => {
+                    try {
+                        let res;
+                        const type = modal.value.type;
+                        const mode = modal.value.mode;
+                        const id = form.value.id || form.value._id || form.value.token_id;
+
+                        if (type === 'user') {
+                            res = mode === 'create' ? await axios.post(`${API}/users`, form.value) : await axios.put(`${API}/users/${id}`, form.value);
+                        } else if (type === 'queue') {
+                            res = mode === 'create' ? await axios.post(`${API}/queues`, form.value) : await axios.put(`${API}/queues/${id}`, form.value);
+                        } else if (type === 'token') {
+                            // Manual Token generation via Token Service
+                            const user = users.value.find(u => (u.id || u._id) === form.value.user_id);
+                            const queue = queues.value.find(q => (q.id || q._id) === form.value.queue_id);
+                            
+                            if (!user || !queue) {
+                                throw new Error('Please select both a user and a queue');
+                            }
+
+                            res = await axios.post(`${API}/tokens/generate`, {
+                                user_id: form.value.user_id,
+                                queue_id: form.value.queue_id,
+                                user_name: user.name,
+                                queue_name: queue.name,
+                                service_type: form.value.service_type || 'general'
+                            });
+                        }
+
+                        showToast(`Successfully ${mode === 'create' ? 'created' : 'updated'} ${type}`);
+                        modal.value.show = false;
+                        refreshData();
+                    } catch (e) {
+                        showToast(e.response?.data?.error || e.message || 'Operation failed', 'error');
+                    }
+                };
+
+                const deleteItem = async (type, id) => {
+                    if (!confirm('Are you sure?')) return;
+                    try {
+                        const endpoint = type === 'user' ? 'users' : (type === 'queue' ? 'queues' : 'notifications');
+                        await axios.delete(`${API}/${endpoint}/${id}`);
+                        showToast(`${type} deleted`);
+                        refreshData();
+                    } catch (e) {
+                        showToast('Delete failed', 'error');
+                    }
+                };
+
+                const updateTokenStatus = async (tokenId, status) => {
+                    try {
+                        await axios.put(`${API}/tokens/status/${tokenId}`, { status });
+                        showToast('Status updated');
+                        refreshData();
+                    } catch (e) {
+                        showToast('Update failed', 'error');
+                    }
+                };
+
+                const callToken = async (token) => {
+                    try {
+                        // Using the notification service via gateway to "call" a token
+                        // Payload must match notification-service validation requirements
+                        await axios.post(`${API}/notifications/send`, {
+                            type: 'token_called',
+                            user_id: token.user_id,
+                            token_id: token.token_id,
+                            queue_id: token.queue_id || queues.value[0]?.id || (await axios.get(`${API}/tokens/${token.token_id}`)).data.queue_id,
+                            token_number: token.token_number,
+                            message: `Token ${token.token_number} is being called to the counter!`,
+                            priority: 5,
+                            user_name: token.user_name,
+                            queue_name: token.queue_name
+                        });
+                        await updateTokenStatus(token.token_id, 'called');
+                        showToast('Token called!');
+                    } catch (e) {
+                        showToast('Failed to call token', 'error');
+                    }
+                };
+
+                const formatDate = (d) => d ? new Date(d).toLocaleString() : 'N/A';
+
+                onMounted(refreshData);
+
+                return {
+                    activeTab, tabs, loading, apiHealthy, users, queues, tokens, notifications,
+                    modal, form, toast, openModal, saveItem, deleteItem, updateTokenStatus, callToken, formatDate, refreshData
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
