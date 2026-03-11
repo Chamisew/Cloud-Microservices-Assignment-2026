@@ -1,0 +1,194 @@
+# Docker Compose for Smart Queue Management System
+
+services:
+  # API Gateway - Central entry point for all requests
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - USER_SERVICE_URL=http://user-service:5001
+      - QUEUE_SERVICE_URL=http://queue-service:5002
+      - TOKEN_SERVICE_URL=http://token-service:5003
+      - NOTIFICATION_SERVICE_URL=http://notification-service:5004
+      - REQUEST_TIMEOUT=30
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Frontend Service - Modern Web UI
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+
+  # MongoDB for local development (without authentication initially)
+  mongodb:
+    image: mongo:5.0.16
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=smart_queue_db
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--host", "localhost", "--port", "27017"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # User Service - Internal only (accessed via API Gateway)
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    # Ports not exposed - accessed via API Gateway only
+    environment:
+      - MONGO_URI=${USER_MONGO_URI}
+      - API_GATEWAY_URL=http://api-gateway:8080
+      - PORT=5001
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Token Service - Internal only (accessed via API Gateway)
+  token-service:
+    build:
+      context: ./token-service
+      dockerfile: Dockerfile
+    # Ports not exposed - accessed via API Gateway only
+    environment:
+      - MONGO_URI=${TOKEN_MONGO_URI}
+      - API_GATEWAY_URL=http://api-gateway:8080
+      - PORT=5003
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      notification-service:
+        condition: service_started
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Notification Service - Internal only (accessed via API Gateway)
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    # Ports not exposed - accessed via API Gateway only
+    environment:
+      - MONGO_URI=${NOTIFICATION_MONGO_URI}
+      - API_GATEWAY_URL=http://api-gateway:8080
+      - PORT=5004
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # Queue Service - Internal only (accessed via API Gateway)
+  queue-service:
+    build:
+      context: ./queue-service
+      dockerfile: Dockerfile
+    # Ports not exposed - accessed via API Gateway only
+    environment:
+      - MONGO_URI=${QUEUE_MONGO_URI}
+      - API_GATEWAY_URL=http://api-gateway:8080
+      - PORT=5002
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      token-service:
+        condition: service_healthy
+      notification-service:
+        condition: service_healthy
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # MongoDB Express (Web UI for MongoDB)
+  mongo-express:
+    image: mongo-express:1.0.0-alpha.4
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=password
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - smart-queue-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  smart-queue-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
