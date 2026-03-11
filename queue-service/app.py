@@ -34,6 +34,8 @@ from dotenv import load_dotenv
 from functools import wraps
 import time
 
+from flask_swagger_ui import get_swaggerui_blueprint
+
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
@@ -49,9 +51,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Service Configuration
-# Security: Using environment variables for service URLs and database connection
-USER_SERVICE_URL = os.environ.get('USER_SERVICE_URL', 'http://localhost:5001')
-TOKEN_SERVICE_URL = os.environ.get('TOKEN_SERVICE_URL', 'http://localhost:5003')
+# Note: Services no longer communicate directly - all communication goes through API Gateway
+# Auto-detect environment: use localhost for local dev, api-gateway for Docker
+def get_api_gateway_url():
+    """Determine API Gateway URL based on environment"""
+    # If explicitly set, use the environment variable
+    env_url = os.environ.get('API_GATEWAY_URL')
+    if env_url:
+        return env_url
+    
+    # Check if running in Docker by looking for .dockerenv file or specific env vars
+    if os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER'):
+        return 'http://api-gateway:8080'
+    
+    # Default to localhost for local development
+    return 'http://localhost:8080'
+
+API_GATEWAY_URL = get_api_gateway_url()
 MONGO_URI = os.environ.get('MONGO_URI')
 
 if not MONGO_URI:
@@ -101,64 +117,122 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-@retry_on_failure(max_retries=3, delay=1)
 def call_user_service(user_id):
     """
-    Call User Service to verify user exists
-    Security: Uses service-to-service authentication if configured
+    Call User Service via API Gateway to verify user exists.
+    Returns tuple: (user_data_or_none, unavailable_flag)
     """
-    url = f"{USER_SERVICE_URL}/api/users/{user_id}"
+    gateway_url = f"{API_GATEWAY_URL}/api/users/{user_id}"
     headers = {
-        'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'User-Agent': 'Queue-Service/1.0'
     }
-    
-    # Add service authentication if API key is configured
-    api_key = os.environ.get('SERVICE_API_KEY')
-    if api_key:
-        headers['X-Service-Key'] = api_key
-    
-    logger.info(f"Calling User Service: {url}")
-    response = requests.get(url, headers=headers, timeout=10)
-    
-    if response.status_code == 200:
-        user_data = response.json()
-        logger.info(f"User verified: {user_id}")
-        return user_data
-    elif response.status_code == 404:
-        logger.warning(f"User not found: {user_id}")
-        return None
-    else:
-        logger.error(f"User Service error {response.status_code}: {response.text}")
-        response.raise_for_status()
+    # Primary: via API Gateway
+    logger.info(f"Calling User Service via API Gateway: {gateway_url}")
+    try:
+        response = requests.get(gateway_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            logger.info(f"User verified: {user_id}")
+            return response.json(), False
+        if response.status_code == 404:
+            logger.warning(f"User not found: {user_id}")
+            return None, False
+        # For any non-200 status, try fallback (gateway could misclassify)
+        logger.warning(f"Gateway call returned {response.status_code}; attempting direct fallback")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call User Service via gateway: {e}")
+        # Proceed to fallback
+    # Fallback: direct to User Service (for local dev resilience)
+    direct_base = os.environ.get('USER_SERVICE_URL', 'http://localhost:5001')
+    direct_url = f"{direct_base}/api/users/{user_id}"
+    logger.info(f"Fallback: Calling User Service directly: {direct_url}")
+    try:
+        response = requests.get(direct_url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            logger.info(f"User verified via direct call: {user_id}")
+            return response.json(), False
+        if response.status_code == 404:
+            logger.warning(f"User not found via direct call: {user_id}")
+            return None, False
+        if 400 <= response.status_code < 500:
+            logger.error(f"Direct call returned {response.status_code}: {response.text}")
+            return None, False
+        logger.error(f"Direct call returned {response.status_code}: {response.text}")
+        return None, True
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call User Service directly: {e}")
+        return None, True
 
-@retry_on_failure(max_retries=3, delay=1)
 def call_token_service(token_request_data):
     """
-    Call Token Service to generate queue token
-    Security: Uses service-to-service authentication
+    Call Token Service via API Gateway to generate queue token
     """
-    url = f"{TOKEN_SERVICE_URL}/api/tokens/generate"
+    url = f"{API_GATEWAY_URL}/api/tokens/generate"
     headers = {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'User-Agent': 'Queue-Service/1.0'
     }
-    
-    # Add service authentication if API key is configured
-    api_key = os.environ.get('SERVICE_API_KEY')
-    if api_key:
-        headers['X-Service-Key'] = api_key
-    
-    logger.info(f"Calling Token Service: {url}")
-    response = requests.post(url, json=token_request_data, headers=headers, timeout=15)
-    
-    if response.status_code == 201:
-        token_data = response.json()
-        logger.info(f"Token generated: {token_data.get('token_id')}")
-        return token_data
-    else:
-        logger.error(f"Token Service error {response.status_code}: {response.text}")
-        response.raise_for_status()
+    logger.info(f"Calling Token Service via API Gateway: {url}")
+    # Primary: via API Gateway
+    try:
+        response = requests.post(url, json=token_request_data, headers=headers, timeout=15)
+        if response.status_code == 201:
+            token_data = response.json()
+            logger.info(f"Token generated: {token_data.get('token_id')}")
+            return token_data
+        logger.warning(f"Token Service via gateway returned {response.status_code}: {response.text}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Token Service via gateway: {e}")
+    # Fallback: direct to Token Service for local dev
+    direct_base = os.environ.get('TOKEN_SERVICE_URL', 'http://localhost:5003')
+    direct_url = f"{direct_base}/api/tokens/generate"
+    logger.info(f"Fallback: Calling Token Service directly: {direct_url}")
+    try:
+        response = requests.post(direct_url, json=token_request_data, headers=headers, timeout=15)
+        if response.status_code == 201:
+            token_data = response.json()
+            logger.info(f"Token generated via direct call: {token_data.get('token_id')}")
+            return token_data
+        logger.error(f"Direct token call returned {response.status_code}: {response.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Token Service directly: {e}")
+        return None
+
+def call_notification_service(notification_data):
+    """
+    Call Notification Service via API Gateway to send a simple notification
+    """
+    url = f"{API_GATEWAY_URL}/api/notifications/send"
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'Queue-Service/1.0'
+    }
+    logger.info(f"Calling Notification Service via API Gateway: {url}")
+    try:
+        response = requests.post(url, json=notification_data, headers=headers, timeout=15)
+        if response.status_code in [200, 201]:
+            logger.info(f"Notification accepted by service")
+            return response.json()
+        logger.warning(f"Notification Service via gateway returned {response.status_code}: {response.text}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Notification Service via gateway: {e}")
+    # Fallback direct call (local dev)
+    direct_base = os.environ.get('NOTIFICATION_SERVICE_URL', 'http://localhost:5004')
+    direct_url = f"{direct_base}/api/notifications/send"
+    logger.info(f"Fallback: Calling Notification Service directly: {direct_url}")
+    try:
+        response = requests.post(direct_url, json=notification_data, headers=headers, timeout=15)
+        if response.status_code in [200, 201]:
+            logger.info(f"Notification accepted by service (direct)")
+            return response.json()
+        logger.error(f"Direct notification call returned {response.status_code}: {response.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Notification Service directly: {e}")
+        return None
 
 # Input Validation Functions
 def validate_queue_data(data):
@@ -225,19 +299,13 @@ def health_check():
         # Test database connection
         client.admin.command('ping')
         
-        # Test service connectivity
+        # Test service connectivity via API Gateway
         services_status = {}
         try:
-            requests.get(f"{USER_SERVICE_URL}/health", timeout=3)
-            services_status['user_service'] = 'connected'
+            requests.get(f"{API_GATEWAY_URL}/health", timeout=3)
+            services_status['api_gateway'] = 'connected'
         except:
-            services_status['user_service'] = 'disconnected'
-            
-        try:
-            requests.get(f"{TOKEN_SERVICE_URL}/health", timeout=3)
-            services_status['token_service'] = 'connected'
-        except:
-            services_status['token_service'] = 'disconnected'
+            services_status['api_gateway'] = 'disconnected'
         
         return jsonify({
             'status': 'healthy',
@@ -415,6 +483,36 @@ def get_queue(queue_id):
         logger.error(f"Error retrieving queue {queue_id}: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/api/queues/<queue_id>', methods=['DELETE'])
+def delete_queue(queue_id):
+    """
+    Delete a queue from the database
+    DELETE /api/queues/{queue_id}
+    Response: Success message
+    """
+    try:
+        # Validate ObjectId format
+        try:
+            object_id = ObjectId(queue_id)
+        except InvalidId:
+            return jsonify({'error': 'Invalid queue ID format'}), 400
+        
+        # Perform hard delete
+        result = queues_collection.delete_one({'_id': object_id})
+        
+        if result.deleted_count == 0:
+            return jsonify({'error': 'Queue not found'}), 404
+        
+        # Also clean up assignments for this queue
+        queue_assignments_collection.delete_many({'queue_id': queue_id})
+        
+        logger.info(f"Queue deleted: {queue_id}")
+        return jsonify({'message': 'Queue deleted successfully'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting queue {queue_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/api/queues/join', methods=['POST'])
 def join_queue():
     """
@@ -450,8 +548,9 @@ def join_queue():
         
         # Step 1: Verify user exists by calling User Service
         logger.info(f"Step 1: Verifying user {user_id} with User Service")
-        user_data = call_user_service(user_id)
-        
+        user_data, user_unavailable = call_user_service(user_id)
+        if user_unavailable:
+            return jsonify({'error': 'User Service unavailable'}), 503
         if not user_data:
             return jsonify({'error': 'User not found'}), 404
         
@@ -473,29 +572,12 @@ def join_queue():
         if queue_data['current_count'] >= queue_data['max_capacity']:
             return jsonify({'error': 'Queue is at maximum capacity'}), 400
         
-        # Step 3: Call Token Service to generate token
-        logger.info(f"Step 3: Generating token with Token Service")
-        token_request = {
-            'user_id': user_id,
-            'queue_id': queue_id,
-            'user_name': user_data.get('name', 'Unknown'),
-            'queue_name': queue_data.get('name', 'Unknown'),
-            'service_type': join_data.get('service_type', 'general')
-        }
-        
-        token_response = call_token_service(token_request)
-        
-        if not token_response:
-            return jsonify({'error': 'Failed to generate token'}), 500
-        
-        # Step 4: Create queue assignment record
+        # Step 3: Create queue assignment record (without token generation)
         assignment_data = {
             'user_id': user_id,
             'queue_id': queue_id,
-            'token_id': token_response['token_id'],
             'user_name': user_data.get('name'),
             'queue_name': queue_data.get('name'),
-            'token_number': token_response['token_number'],
             'status': 'waiting',
             'joined_at': datetime.utcnow(),
             'estimated_wait_time': queue_data.get('average_wait_time', 10)
@@ -513,7 +595,7 @@ def join_queue():
             }
         )
         
-        # Prepare response
+        # Prepare response (without token details)
         response_data = {
             'assignment_id': str(assignment_result.inserted_id),
             'user': {
@@ -526,11 +608,6 @@ def join_queue():
                 'name': queue_data.get('name'),
                 'description': queue_data.get('description')
             },
-            'token': {
-                'id': token_response['token_id'],
-                'number': token_response['token_number'],
-                'status': token_response['status']
-            },
             'assignment_details': {
                 'status': 'waiting',
                 'joined_at': assignment_data['joined_at'].isoformat(),
@@ -538,7 +615,7 @@ def join_queue():
             }
         }
         
-        logger.info(f"User {user_id} successfully joined queue {queue_id} with token {token_response['token_id']}")
+        logger.info(f"User {user_id} successfully joined queue {queue_id} (no token generated)")
         return jsonify(response_data), 201
         
     except requests.exceptions.RequestException as e:
@@ -546,6 +623,88 @@ def join_queue():
         return jsonify({'error': 'Service communication failed'}), 503
     except Exception as e:
         logger.error(f"Error joining queue: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/queues/notify', methods=['POST'])
+def notify_from_queue():
+    """
+    Simple communication from Queue Service to Notification Service
+    POST /api/queues/notify
+    Body:
+    {
+      "user_id": "string",        // required (ObjectId hex)
+      "queue_id": "string",       // required (ObjectId hex)
+      "message": "string",        // optional, default generated
+      "token_number": "string",   // optional, default Q000
+      "service_type": "string",   // optional
+      "priority": 1,              // optional
+      "user_name": "string",      // optional, used as hint
+      "queue_name": "string"      // optional, used as hint
+    }
+    Returns notification service response.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        # Basic validation for IDs
+        try:
+            ObjectId(data.get('user_id', ''))
+            ObjectId(data.get('queue_id', ''))
+        except InvalidId:
+            return jsonify({'error': 'Invalid user_id or queue_id format'}), 400
+        # Build required notification payload
+        token_id = str(ObjectId())  # placeholder to satisfy notification schema
+        token_number = data.get('token_number') or 'Q000'
+        message = data.get('message') or f"Queue update for user {data['user_id']}"
+        notification_payload = {
+            'type': 'queue_update',
+            'user_id': data['user_id'],
+            'token_id': token_id,
+            'queue_id': data['queue_id'],
+            'token_number': token_number,
+            'message': message
+        }
+        # Optional fields
+        if 'service_type' in data:
+            notification_payload['service_type'] = data['service_type']
+        if 'priority' in data:
+            notification_payload['priority'] = data['priority']
+        if 'user_name' in data:
+            notification_payload['user_name'] = data['user_name']
+        if 'queue_name' in data:
+            notification_payload['queue_name'] = data['queue_name']
+        # Send to Notification Service
+        result = call_notification_service(notification_payload)
+        if result is None:
+            return jsonify({'error': 'Failed to send notification'}), 502
+        return jsonify(result), 201
+    except Exception as e:
+        logger.error(f"Error sending notification from Queue Service: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/queues/assignments', methods=['GET'])
+def get_assignments():
+    """
+    Retrieve all queue assignments
+    GET /api/queues/assignments
+    Response: List of recent assignments
+    """
+    try:
+        # Query database for recent assignments
+        cursor = queue_assignments_collection.find().sort('joined_at', -1).limit(50)
+        
+        assignments = []
+        for assignment in cursor:
+            assignment['_id'] = str(assignment['_id'])
+            if 'joined_at' in assignment and hasattr(assignment['joined_at'], 'isoformat'):
+                assignment['joined_at'] = assignment['joined_at'].isoformat()
+            assignments.append(assignment)
+            
+        logger.info(f"Retrieved {len(assignments)} assignments")
+        return jsonify({'assignments': assignments}), 200
+    except Exception as e:
+        logger.error(f"Error retrieving assignments: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/queues/assignments/<assignment_id>', methods=['GET'])
@@ -579,6 +738,48 @@ def get_assignment(assignment_id):
         logger.error(f"Error retrieving assignment {assignment_id}: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+
+@app.route('/api/queues/assignments/<assignment_id>', methods=['DELETE'])
+def remove_from_queue(assignment_id):
+    """
+    Remove a user from a queue
+    - Deletes assignment from collection
+    - Decrements queue current_count
+    """
+    try:
+        # Validate assignment ID
+        try:
+            object_id = ObjectId(assignment_id)
+        except InvalidId:
+            return jsonify({'error': 'Invalid assignment ID format'}), 400
+        
+        # Find the assignment (needed for queue_id)
+        assignment = queue_assignments_collection.find_one({'_id': object_id})
+        
+        if not assignment:
+            return jsonify({'error': 'Assignment not found'}), 404
+        
+        queue_id = assignment['queue_id']
+        
+        # DELETE the assignment from collection
+        queue_assignments_collection.delete_one({'_id': object_id})
+        
+        # Decrement queue current_count
+        queues_collection.update_one(
+            {'_id': ObjectId(queue_id)},
+            {
+                '$inc': {'current_count': -1},
+                '$set': {'updated_at': datetime.utcnow()}
+            }
+        )
+        
+        logger.info(f"User removed from queue. Assignment deleted: {assignment_id}")
+        return jsonify({'message': 'Successfully removed from queue'}), 200
+        
+    except Exception as e:
+        logger.error(f"Error removing from queue: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 # Error Handlers
 @app.errorhandler(404)
 def not_found(error):
@@ -591,14 +792,28 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({'error': 'Internal server error'}), 500
 
+# Swagger UI Configuration
+SWAGGER_URL = '/api/docs'  # URL for exposing Swagger UI
+API_URL = '/static/swagger.yaml'  # Our API definition
+
+# Call factory function to create our blueprint
+swaggerui_blueprint = get_swaggerui_blueprint(
+    SWAGGER_URL,
+    API_URL,
+    config={
+        'app_name': "Queue Service"
+    }
+)
+
+app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
+
 # Application startup
 if __name__ == '__main__':
     # Get port from environment variable or default to 5002
     port = int(os.environ.get('PORT', 5002))
     
     logger.info(f"Starting Queue Service on port {port}")
-    logger.info(f"User Service URL: {USER_SERVICE_URL}")
-    logger.info(f"Token Service URL: {TOKEN_SERVICE_URL}")
+    logger.info(f"API Gateway URL: {API_GATEWAY_URL}")
     logger.info("Database connection established")
     logger.info("Ready to serve requests")
     

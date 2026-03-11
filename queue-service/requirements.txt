@@ -3,4 +3,5 @@ Flask-CORS==4.0.0
 pymongo==4.5.0
 python-dotenv==1.0.0
 requests==2.31.0
+flask-swagger-ui==4.11.1
 dnspython==2.4.2

@@ -1,0 +1,618 @@
+openapi: 3.0.3
+info:
+  title: Queue Service API
+  description: |
+    Queue Service for Smart Queue Management System
+    
+    This microservice manages queue operations including:
+    - Queue creation and management
+    - User assignment to queues
+    - Queue status monitoring
+    - Integration with User and Token services
+    
+    **Integration Flow:**
+    1. POST /queues/join calls User Service to verify user exists
+    2. If successful, calls Token Service to generate token
+    3. Returns complete assignment with token information
+    
+    **Security Features:**
+    - Environment-based MongoDB connection
+    - Service-to-service authentication
+    - Input validation and error handling
+    - Circuit breaker pattern for external calls
+  version: 1.0.0
+  contact:
+    name: Smart Queue Management Team
+    email: team@smartqueue.local
+
+servers:
+  - url: http://localhost:5002
+    description: Local development server
+  - url: https://queue-service.prod.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service status and service connectivity information
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: Queue Service
+                  timestamp:
+                    type: string
+                    format: date-time
+                  database:
+                    type: string
+                    example: connected
+                  services:
+                    type: object
+                    properties:
+                      user_service:
+                        type: string
+                        example: connected
+                      token_service:
+                        type: string
+                        example: connected
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unhealthy
+                  service:
+                    type: string
+                    example: Queue Service
+                  error:
+                    type: string
+
+  /api/queues:
+    post:
+      summary: Create a new queue
+      description: Create a new queue for user assignments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - description
+              properties:
+                name:
+                  type: string
+                  description: Queue name (must be unique)
+                  minLength: 3
+                  maxLength: 50
+                  example: "General Service"
+                description:
+                  type: string
+                  description: Queue description
+                  minLength: 10
+                  maxLength: 200
+                  example: "General customer service queue"
+                max_capacity:
+                  type: integer
+                  description: Maximum queue capacity
+                  minimum: 1
+                  maximum: 1000
+                  default: 50
+                  example: 50
+                service_type:
+                  type: string
+                  description: Type of service provided
+                  example: "customer-service"
+      responses:
+        '201':
+          description: Queue created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    example: "507f1f77bcf86cd799439011"
+                  name:
+                    type: string
+                    example: "General Service"
+                  description:
+                    type: string
+                    example: "General customer service queue"
+                  max_capacity:
+                    type: integer
+                    example: 50
+                  current_count:
+                    type: integer
+                    example: 0
+                  status:
+                    type: string
+                    example: "active"
+                  created_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '409':
+          description: Queue name already exists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Queue with this name already exists"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+    get:
+      summary: Retrieve all queues
+      description: Get list of all active queues with status information
+      responses:
+        '200':
+          description: Queues retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        _id:
+                          type: string
+                        name:
+                          type: string
+                        description:
+                          type: string
+                        max_capacity:
+                          type: integer
+                        current_count:
+                          type: integer
+                        average_wait_time:
+                          type: integer
+                        service_type:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        occupancy_percentage:
+                          type: number
+                          format: float
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/queues/{queue_id}:
+    get:
+      summary: Retrieve a specific queue
+      description: Get detailed information about a specific queue
+      parameters:
+        - name: queue_id
+          in: path
+          required: true
+          description: Queue ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Queue retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  _id:
+                    type: string
+                  name:
+                    type: string
+                  description:
+                    type: string
+                  max_capacity:
+                    type: integer
+                  current_count:
+                    type: integer
+                  average_wait_time:
+                    type: integer
+                  service_type:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+                  updated_at:
+                    type: string
+                    format: date-time
+                  occupancy_percentage:
+                    type: number
+                    format: float
+        '400':
+          description: Invalid queue ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid queue ID format"
+        '404':
+          description: Queue not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Queue not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/queues/join:
+    post:
+      summary: Join user to queue (Core Integration Endpoint)
+      description: |
+        Join a user to a queue with complete integration flow:
+        1. Verify user exists by calling User Service
+        2. Create a queue assignment record in the database
+        3. Increment the queue's current count
+        4. Return complete assignment details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - queue_id
+              properties:
+                user_id:
+                  type: string
+                  description: User ID (must exist in User Service)
+                  example: "507f1f77bcf86cd799439011"
+                queue_id:
+                  type: string
+                  description: Queue ID (must exist and be active)
+                  example: "507f1f77bcf86cd799439012"
+                service_type:
+                  type: string
+                  description: Optional service type specification
+                  example: "priority"
+      responses:
+        '201':
+          description: User successfully joined queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assignment_id:
+                    type: string
+                    example: "507f1f77bcf86cd799439013"
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                      email:
+                        type: string
+                  queue:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      name:
+                        type: string
+                      description:
+                        type: string
+                  assignment_details:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        example: "waiting"
+                      joined_at:
+                        type: string
+                        format: date-time
+                      estimated_wait_time:
+                        type: integer
+        '400':
+          description: Invalid input data or queue at capacity
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '404':
+          description: User or queue not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "User not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '503':
+          description: Service communication failure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Service communication failed"
+
+  /api/queues/notify:
+    post:
+      summary: Send simple notification
+      description: Trigger a notification from the Queue Service to the Notification Service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - queue_id
+              properties:
+                user_id:
+                  type: string
+                  example: 507f1f77bcf86cd799439011
+                queue_id:
+                  type: string
+                  example: 507f1f77bcf86cd799439012
+                message:
+                  type: string
+                  example: Your turn is approaching
+                token_number:
+                  type: string
+                  example: Q001
+                service_type:
+                  type: string
+                  example: priority
+                priority:
+                  type: integer
+                  example: 1
+                user_name:
+                  type: string
+                  example: John Doe
+                queue_name:
+                  type: string
+                  example: General Service
+      responses:
+        '201':
+          description: Notification sent successfully
+        '400':
+          description: Invalid input data
+        '502':
+          description: Failed to send notification
+        '500':
+          description: Internal server error
+
+  /api/queues/assignments/{assignment_id}:
+    get:
+      summary: Get queue assignment details
+      description: Retrieve detailed information about a queue assignment
+      parameters:
+        - name: assignment_id
+          in: path
+          required: true
+          description: Assignment ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Assignment retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  _id:
+                    type: string
+                  user_id:
+                    type: string
+                  queue_id:
+                    type: string
+                  token_id:
+                    type: string
+                  user_name:
+                    type: string
+                  queue_name:
+                    type: string
+                  token_number:
+                    type: string
+                  status:
+                    type: string
+                  joined_at:
+                    type: string
+                    format: date-time
+                  estimated_wait_time:
+                    type: integer
+        '400':
+          description: Invalid assignment ID format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '404':
+          description: Assignment not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Assignment not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+components:
+  schemas:
+    Queue:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Unique queue identifier
+        name:
+          type: string
+          description: Queue name
+        description:
+          type: string
+          description: Queue description
+        max_capacity:
+          type: integer
+          description: Maximum queue capacity
+        current_count:
+          type: integer
+          description: Current number of users in queue
+        average_wait_time:
+          type: integer
+          description: Average wait time in minutes
+        service_type:
+          type: string
+          description: Type of service provided
+        status:
+          type: string
+          description: Queue status (active/inactive)
+        created_at:
+          type: string
+          format: date-time
+          description: Queue creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Queue last update timestamp
+        occupancy_percentage:
+          type: number
+          format: float
+          description: Current occupancy percentage
+
+    Assignment:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Unique assignment identifier
+        user_id:
+          type: string
+          description: User identifier
+        queue_id:
+          type: string
+          description: Queue identifier
+        token_id:
+          type: string
+          description: Token identifier
+        user_name:
+          type: string
+          description: User name
+        queue_name:
+          type: string
+          description: Queue name
+        token_number:
+          type: string
+          description: Assigned token number
+        status:
+          type: string
+          description: Assignment status
+        joined_at:
+          type: string
+          format: date-time
+          description: Assignment creation timestamp
+        estimated_wait_time:
+          type: integer
+          description: Estimated wait time in minutes
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Queues
+    description: Queue management operations
+  - name: Assignments
+    description: Queue assignment operations
+  - name: Health
+    description: Service health monitoring
+  - name: Integration
+    description: Service-to-service integration endpoints
