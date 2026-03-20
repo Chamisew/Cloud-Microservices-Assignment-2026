@@ -55,7 +55,7 @@ SERVICES = {
 
 REQUEST_TIMEOUT = int(os.environ.get('REQUEST_TIMEOUT', 30))
 
-// Helper function to determine which service to route to based on path
+
 
 def get_service_for_path(path):
     """Determine which service should handle the given path"""
