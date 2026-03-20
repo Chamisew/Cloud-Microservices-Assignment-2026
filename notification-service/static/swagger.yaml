@@ -1,0 +1,568 @@
+openapi: 3.0.3
+info:
+  title: Notification Service API
+  description: |
+    Notification Service for Smart Queue Management System
+    
+    This microservice handles all notification alerts and serves as the FINAL integration point
+    in the service chain: User Service → Queue Service → Token Service → Notification Service
+    
+    **Core Integration Flow:**
+    1. POST /api/notifications/send receives request from Token Service
+    2. Validates and sanitizes input data
+    3. Saves notification record to MongoDB Atlas
+    4. Returns confirmation to Token Service
+    
+    **Security Features:**
+    - Environment-based MongoDB connection
+    - Comprehensive input validation and sanitization
+    - Robust error handling to prevent crashes
+    - RESTful API design with proper HTTP status codes
+  version: 1.0.0
+  contact:
+    name: Smart Queue Management Team
+    email: team@smartqueue.local
+
+servers:
+  - url: http://localhost:5004
+    description: Local development server
+  - url: https://notification-service.prod.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service status and confirms FINAL integration point
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: Notification Service
+                  timestamp:
+                    type: string
+                    format: date-time
+                  database:
+                    type: string
+                    example: connected
+                  role:
+                    type: string
+                    example: final_integration_point
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unhealthy
+                  service:
+                    type: string
+                    example: Notification Service
+                  error:
+                    type: string
+
+  /api/notifications/send:
+    post:
+      summary: Send notification (FINAL Integration Endpoint)
+      description: |
+        Send notification from Token Service - FINAL integration point in the chain.
+        This endpoint receives alerts from Token Service and saves them to MongoDB.
+        
+        **Integration Flow:**
+        1. Receive notification request from Token Service
+        2. Validate and sanitize input data
+        3. Save notification record to MongoDB Atlas
+        4. Return confirmation to Token Service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+                - user_id
+                - token_id
+                - queue_id
+                - token_number
+                - message
+              properties:
+                type:
+                  type: string
+                  enum: [token_generated, token_called, token_reminder, queue_update, system_alert]
+                  example: token_generated
+                user_id:
+                  type: string
+                  description: 24-character hex ObjectId
+                  example: 507f1f77bcf86cd799439011
+                token_id:
+                  type: string
+                  description: 24-character hex ObjectId
+                  example: 507f1f77bcf86cd799439012
+                queue_id:
+                  type: string
+                  description: 24-character hex ObjectId
+                  example: 507f191e810c19729de860ea
+                token_number:
+                  type: string
+                  example: Q001
+                message:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+                  example: Your token Q001 is ready in General Service
+                priority:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  default: 3
+                service_type:
+                  type: string
+                  enum: [general, priority, vip, emergency]
+                  default: general
+                user_name:
+                  type: string
+                  description: Optional fallback name
+                queue_name:
+                  type: string
+                  description: Optional fallback name
+      responses:
+        '201':
+          description: Notification sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notification_id:
+                    type: string
+                    example: "507f1f77bcf86cd799439013"
+                  status:
+                    type: string
+                    example: "sent"
+                  message:
+                    type: string
+                    example: "Notification sent successfully"
+                  created_at:
+                    type: string
+                    format: date-time
+                  token_number:
+                    type: string
+                    example: "Q001"
+                  user_name:
+                    type: string
+                    example: "John Doe"
+                  queue_name:
+                    type: string
+                    example: "General Service"
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/notifications:
+    get:
+      summary: Retrieve notifications
+      description: Get notifications with filtering and pagination
+      parameters:
+        - name: type
+          in: query
+          description: Filter by notification type
+          schema:
+            type: string
+            enum: [token_generated, token_called, token_reminder, queue_update, system_alert]
+        - name: user_id
+          in: query
+          description: Filter by user ID
+          schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number (starting from 1)
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of notifications per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: Notifications retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        notification_id:
+                          type: string
+                        type:
+                          type: string
+                        user_name:
+                          type: string
+                        token_number:
+                          type: string
+                        queue_name:
+                          type: string
+                        message:
+                          type: string
+                        status:
+                          type: string
+                        priority:
+                          type: integer
+                        created_at:
+                          type: string
+                          format: date-time
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+        '400':
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/notifications/{notification_id}:
+    get:
+      summary: Retrieve specific notification
+      description: Get detailed information about a specific notification
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Notification retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '404':
+          description: Notification not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Notification not found"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+    put:
+      summary: Edit notification
+      description: Update an existing notification message or status
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Updated notification message"
+                status:
+                  type: string
+                  enum: [read, archived, sent]
+                  example: read
+      responses:
+        '200':
+          description: Notification updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '400':
+          description: Invalid input data
+        '404':
+          description: Notification not found
+        '500':
+          description: Internal server error
+
+    delete:
+      summary: Delete notification
+      description: Permanently delete a notification by ID
+      parameters:
+        - name: notification_id
+          in: path
+          required: true
+          description: Notification ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Notification deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Notification 507f1f77bcf86cd799439013 deleted successfully"
+        '404':
+          description: Notification not found
+        '500':
+          description: Internal server error
+
+  /api/notifications/user/{user_id}:
+    get:
+      summary: Get user notifications
+      description: Retrieve all notifications for a specific user
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User notifications retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  count:
+                    type: integer
+        '400':
+          description: Invalid user ID format
+        '500':
+          description: Internal server error
+
+  /api/notifications/from-queue:
+    post:
+      summary: Send notification from queue event
+      description: Simplified endpoint for queue-related notifications without tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - queue_id
+              properties:
+                user_id:
+                  type: string
+                  example: 507f1f77bcf86cd799439011
+                queue_id:
+                  type: string
+                  example: 507f191e810c19729de860ea
+                message:
+                  type: string
+                  example: User joined the queue
+                token_number:
+                  type: string
+                  default: Q000
+                service_type:
+                  type: string
+                  default: general
+                priority:
+                  type: integer
+                  default: 3
+                user_name:
+                  type: string
+                queue_name:
+                  type: string
+      responses:
+        '201':
+          description: Notification created successfully
+        '400':
+          description: Invalid input data
+        '500':
+          description: Internal server error
+
+  /api/notifications/stats:
+    get:
+      summary: Get notification statistics
+      description: Get aggregated statistics about notifications
+      responses:
+        '200':
+          description: Statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_notifications:
+                    type: integer
+                  notifications_by_type:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  notifications_by_status:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                  notifications_last_24h:
+                    type: integer
+                  timestamp:
+                    type: string
+                    format: date-time
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+components:
+  schemas:
+    Notification:
+      type: object
+      properties:
+        notification_id:
+          type: string
+          description: Unique notification identifier
+        type:
+          type: string
+          description: Notification type
+          enum: [token_generated, token_called, token_reminder, queue_update, system_alert]
+        user_id:
+          type: string
+          description: Associated user ID
+        user_name:
+          type: string
+          description: User name
+        token_id:
+          type: string
+          description: Associated token ID
+        token_number:
+          type: string
+          description: Token number
+        queue_name:
+          type: string
+          description: Queue name
+        message:
+          type: string
+          description: Notification message
+        status:
+          type: string
+          description: Notification status
+          enum: [sent, delivered, failed, pending]
+        priority:
+          type: integer
+          description: Notification priority (1-5)
+        service_type:
+          type: string
+          description: Service type
+          enum: [general, priority, vip, emergency]
+        created_at:
+          type: string
+          format: date-time
+          description: Notification creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Notification last update timestamp
+        sent_at:
+          type: string
+          format: date-time
+          description: When notification was sent
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Notifications
+    description: Notification management operations
+  - name: Integration
+    description: Service-to-service integration endpoints
+  - name: Health
+    description: Service health monitoring
+  - name: Statistics
+    description: Notification statistics and analytics
