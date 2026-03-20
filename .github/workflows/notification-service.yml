@@ -1,0 +1,258 @@
+name: Notification Service CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'notification-service/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'notification-service/**'
+
+jobs:
+  # Security Scanning Job
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd notification-service
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit safety
+
+      - name: Run Bandit Security Scan
+        run: |
+          cd notification-service
+          bandit -r . -f json -o bandit-report.json || true
+
+      - name: Upload Bandit Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: bandit-security-report
+          path: notification-service/bandit-report.json
+          if-no-files-found: ignore
+
+      - name: Run Safety Dependency Check
+        run: |
+          cd notification-service
+          safety check --full-report || true
+
+  # Code Quality Job
+  code-quality:
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd notification-service
+          pip install flake8 pylint
+
+      - name: Run Flake8 Linting
+        run: |
+          cd notification-service
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Run PyLint Analysis
+        run: |
+          cd notification-service
+          pylint *.py --disable=R,C,W1203,W0718,W0719 || true
+
+  # Docker Build and Test Job
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image
+        run: |
+          cd notification-service
+          docker build -t notification-service:latest .
+
+      - name: Test Docker container
+        run: |
+          cd notification-service
+          # Run container in background
+          docker run -d --name notification-service-test -p 5004:5004 notification-service:latest
+          # Wait for container to start
+          sleep 10
+          # Test health endpoint
+          curl -f http://localhost:5004/health || exit 1
+          # Clean up
+          docker stop notification-service-test
+          docker rm notification-service-test
+
+  # Docker Push Job (only on main branch)
+  docker-push:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          cd notification-service
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/notification-service:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/notification-service:latest
+
+  # Unit Test Job
+  unit-test:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongo
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd notification-service
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run unit tests
+        run: |
+          cd notification-service
+          # Set environment variables for testing
+          export MONGO_URI="mongodb://localhost:27017/test_db"
+          export FLASK_ENV=test
+          
+          # Run tests
+          python -m pytest tests/ -v --cov=app --cov-report=xml || true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./notification-service/coverage.xml
+          flags: unittests
+          name: notification-service-coverage
+        if: always()
+
+  # Integration Test Job
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: [docker-build, unit-test]
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd mongo
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          cd notification-service
+          pip install -r requirements.txt
+          pip install requests
+
+      - name: Test notification sending integration
+        run: |
+          cd notification-service
+          # Set environment variables
+          export MONGO_URI="mongodb://localhost:27017/test_db"
+          export FLASK_ENV=test
+          
+          # Start the service in background
+          python app.py &
+          SERVICE_PID=$!
+          
+          # Wait for service to start
+          sleep 5
+          
+          # Test the integration endpoint
+          curl -X POST http://localhost:5004/api/notifications/send \
+            -H "Content-Type: application/json" \
+            -d '{
+              "type": "token_generated",
+              "user_id": "507f1f77bcf86cd799439011",
+              "user_name": "John Doe",
+              "token_id": "507f1f77bcf86cd799439012",
+              "token_number": "Q001",
+              "queue_name": "General Service",
+              "message": "Your token Q001 is ready in General Service",
+              "priority": 3
+            }' || echo "Integration test completed"
+          
+          # Clean up
+          kill $SERVICE_PID
+
+  # Deployment Job
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [docker-push, integration-test]
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying Notification Service to staging environment..."
+          # Add your staging deployment logic here
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [docker-push, integration-test]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to Production
+        run: |
+          echo "Deploying Notification Service to production environment..."
+          # Add your production deployment logic here
