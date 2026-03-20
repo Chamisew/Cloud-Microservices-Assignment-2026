@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Service Explorer - Smart Queue</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [v-cloak] { display: none; }
+        .gradient-bg { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+        .token-card { transition: all 0.3s ease; border-left-width: 6px; }
+        .token-card:hover { transform: scale(1.02); }
+        .status-active { border-left-color: #10b981; }
+        .status-called { border-left-color: #3b82f6; }
+        .status-serving { border-left-color: #8b5cf6; }
+        .status-completed { border-left-color: #64748b; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+    <div id="app" v-cloak>
+        <!-- Header -->
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-20 items-center">
+                    <div class="flex items-center space-x-3">
+                        <div class="gradient-bg p-2.5 rounded-xl text-white shadow-lg">
+                            <i class="fas fa-ticket-alt text-2xl"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-black tracking-tight text-slate-800">Token Service <span class="text-amber-600">Explorer</span></h1>
+                            <div class="flex items-center space-x-2">
+                                <span class="w-2 h-2 rounded-full" :class="apiHealthy ? 'bg-green-500' : 'bg-red-500'"></span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">{{ apiHealthy ? 'Healthy' : 'Offline' }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <a href="index.html" class="text-sm font-bold text-slate-500 hover:text-amber-600 transition-colors">
+                            <i class="fas fa-arrow-left mr-2"></i>Dashboard
+                        </a>
+                        <button @click="refreshData" class="p-2 text-slate-400 hover:text-amber-600 transition-colors">
+                            <i class="fas fa-sync-alt" :class="{'animate-spin': loading}"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                
+                <!-- Sidebar: Generate Token -->
+                <div class="lg:col-span-4 space-y-8">
+                    <!-- Token Generation Form -->
+                    <section class="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
+                        <h2 class="text-lg font-bold mb-6 flex items-center text-slate-800">
+                            <i class="fas fa-plus-circle text-amber-500 mr-3"></i>Issue New Token
+                        </h2>
+                        <form @submit.prevent="generateToken" class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Target User</label>
+                                <select v-model="forms.generate.user_id" @change="onUserSelect" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500 transition-all">
+                                    <option value="">Select User</option>
+                                    <option v-for="u in users" :key="u.id || u._id" :value="u.id || u._id">{{ u.name }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Target Queue</label>
+                                <select v-model="forms.generate.queue_id" @change="onQueueSelect" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500 transition-all">
+                                    <option value="">Select Queue</option>
+                                    <option v-for="q in queues" :key="q._id || q.id" :value="q._id || q.id">{{ q.name }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Service Priority</label>
+                                <select v-model="forms.generate.service_type" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500 transition-all">
+                                    <option value="general">General</option>
+                                    <option value="priority">Priority</option>
+                                    <option value="vip">VIP</option>
+                                    <option value="emergency">Emergency</option>
+                                </select>
+                            </div>
+                            <button type="submit" :disabled="submitting || !forms.generate.user_id || !forms.generate.queue_id"
+                                class="w-full gradient-bg text-white font-black py-4 rounded-xl shadow-amber-100 shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 mt-4">
+                                <span v-if="submitting">GENERATING...</span>
+                                <span v-else>GENERATE TOKEN</span>
+                            </button>
+                        </form>
+                    </section>
+
+                    <!-- Filter Section -->
+                    <section class="bg-slate-800 rounded-3xl shadow-xl p-8 text-white">
+                        <h2 class="text-lg font-bold mb-6 flex items-center">
+                            <i class="fas fa-filter text-amber-400 mr-3"></i>Quick Lookup
+                        </h2>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">User History</label>
+                                <select v-model="filterUserId" @change="fetchUserTokens" class="w-full bg-slate-700 border-0 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500">
+                                    <option value="">All Users</option>
+                                    <option v-for="u in users" :key="u.id || u._id" :value="u.id || u._id">{{ u.name }}</option>
+                                </select>
+                            </div>
+                            <button @click="refreshData" class="w-full bg-amber-500 text-white font-bold py-3 rounded-xl hover:bg-amber-600 transition-colors">
+                                CLEAR FILTERS
+                            </button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Main: Token List -->
+                <div class="lg:col-span-8 space-y-8">
+                    <div class="flex justify-between items-end">
+                        <div>
+                            <h2 class="text-2xl font-black text-slate-800">Token Management</h2>
+                            <p class="text-slate-400 text-sm">Update status and track live token orchestration</p>
+                        </div>
+                        <div class="bg-white px-4 py-2 rounded-full border border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            LIVE FEED
+                        </div>
+                    </div>
+
+                    <div v-if="tokens.length === 0" class="bg-white rounded-3xl p-20 text-center border-2 border-dashed border-slate-200">
+                        <i class="fas fa-ticket-alt text-slate-200 text-6xl mb-4"></i>
+                        <h3 class="text-xl font-bold text-slate-400">No tokens found</h3>
+                        <p class="text-slate-300">Generate a token to see it here.</p>
+                    </div>
+
+                    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div v-for="t in tokens" :key="t.token_id" 
+                            class="token-card bg-white p-6 rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden flex flex-col justify-between"
+                            :class="'status-' + t.status">
+                            
+                            <div>
+                                <div class="flex justify-between items-start mb-4">
+                                    <div class="text-3xl font-black text-slate-800">{{ t.token_number }}</div>
+                                    <div class="flex flex-col items-end">
+                                        <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest"
+                                            :class="{
+                                                'bg-green-50 text-green-600': t.status === 'active',
+                                                'bg-blue-50 text-blue-600': t.status === 'called',
+                                                'bg-purple-50 text-purple-600': t.status === 'serving',
+                                                'bg-slate-50 text-slate-600': t.status === 'completed'
+                                            }">
+                                            {{ t.status }}
+                                        </span>
+                                        <span class="text-[9px] text-slate-300 mt-1 font-mono uppercase">{{ t.service_type }} Priority</span>
+                                    </div>
+                                </div>
+
+                                <div class="space-y-2">
+                                    <div class="flex items-center text-sm">
+                                        <i class="fas fa-user text-slate-300 w-6"></i>
+                                        <span class="font-bold text-slate-700">{{ t.user_name }}</span>
+                                    </div>
+                                    <div class="flex items-center text-sm">
+                                        <i class="fas fa-layer-group text-slate-300 w-6"></i>
+                                        <span class="text-slate-500">{{ t.queue_name }}</span>
+                                    </div>
+                                    <div class="flex items-center text-[10px] text-slate-400 pt-2">
+                                        <i class="far fa-clock w-6"></i>
+                                        <span>Issued: {{ formatDate(t.created_at) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mt-6 pt-6 border-t border-slate-50">
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button @click="updateStatus(t.token_id, 'called')" 
+                                        v-if="t.status === 'active'"
+                                        class="bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-600 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all">
+                                        CALL USER
+                                    </button>
+                                    <button @click="updateStatus(t.token_id, 'serving')" 
+                                        v-if="t.status === 'called'"
+                                        class="bg-purple-50 hover:bg-purple-600 hover:text-white text-purple-600 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all">
+                                        START SERVING
+                                    </button>
+                                    <button @click="updateStatus(t.token_id, 'completed')" 
+                                        v-if="['called', 'serving'].includes(t.status)"
+                                        class="bg-green-50 hover:bg-green-600 hover:text-white text-green-600 text-[10px] font-black uppercase tracking-wider py-2.5 rounded-xl transition-all">
+                                        COMPLETE
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Metadata Modal -->
+        <div v-if="modals.detail.show" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" @click="modals.detail.show = false"></div>
+            <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg relative z-10 overflow-hidden">
+                <div class="p-8">
+                    <div class="flex justify-between items-start mb-6">
+                        <h3 class="text-2xl font-black text-slate-800">Token <span class="text-amber-600">Metadata</span></h3>
+                        <button @click="modals.detail.show = false" class="text-slate-300 hover:text-slate-600"><i class="fas fa-times"></i></button>
+                    </div>
+                    
+                    <div v-if="selectedToken" class="space-y-6">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-50 p-4 rounded-2xl">
+                                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Internal ID</div>
+                                <div class="text-xs font-mono text-slate-600 break-all">{{ selectedToken.token_id }}</div>
+                            </div>
+                            <div class="bg-slate-50 p-4 rounded-2xl">
+                                <div class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</div>
+                                <div class="text-sm font-bold text-slate-700 uppercase">{{ selectedToken.status }}</div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="flex justify-between text-sm py-2 border-b border-slate-100">
+                                <span class="text-slate-400">Created At</span>
+                                <span class="font-bold text-slate-700">{{ selectedToken.created_at }}</span>
+                            </div>
+                            <div class="flex justify-between text-sm py-2 border-b border-slate-100">
+                                <span class="text-slate-400">Expires At</span>
+                                <span class="font-bold text-amber-600">{{ selectedToken.expires_at }}</span>
+                            </div>
+                            <div class="flex justify-between text-sm py-2 border-b border-slate-100" v-if="selectedToken.called_at">
+                                <span class="text-slate-400">Called At</span>
+                                <span class="font-bold text-blue-600">{{ selectedToken.called_at }}</span>
+                            </div>
+                            <div class="flex justify-between text-sm py-2 border-b border-slate-100" v-if="selectedToken.completed_at">
+                                <span class="text-slate-400">Completed At</span>
+                                <span class="font-bold text-green-600">{{ selectedToken.completed_at }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-50 p-6 flex justify-end">
+                    <button @click="modals.detail.show = false" class="px-8 py-3 bg-slate-800 text-white rounded-xl font-bold shadow-lg hover:bg-slate-900 transition-all">Close Metadata</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast -->
+        <transition name="toast">
+            <div v-if="toast.show" class="fixed bottom-10 right-10 z-[200]">
+                <div :class="toast.type === 'error' ? 'bg-red-600' : 'bg-slate-800'" class="text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center space-x-3 border border-white/10 backdrop-blur-md">
+                    <i :class="toast.type === 'error' ? 'fas fa-exclamation-triangle' : 'fas fa-check-circle'"></i>
+                    <span class="font-bold text-sm">{{ toast.message }}</span>
+                </div>
+            </div>
+        </transition>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        const API = 'http://localhost:8080/api';
+
+        createApp({
+            setup() {
+                const loading = ref(true);
+                const submitting = ref(false);
+                const apiHealthy = ref(false);
+                const users = ref([]);
+                const queues = ref([]);
+                const tokens = ref([]);
+                const selectedToken = ref(null);
+                const filterUserId = ref('');
+
+                const modals = ref({
+                    detail: { show: false }
+                });
+
+                const forms = ref({
+                    generate: { user_id: '', queue_id: '', user_name: '', queue_name: '', service_type: 'general' }
+                });
+
+                const toast = ref({ show: false, message: '', type: 'success' });
+
+                const showToast = (message, type = 'success') => {
+                    toast.value = { show: true, message, type };
+                    setTimeout(() => toast.value.show = false, 3000);
+                };
+
+                const onUserSelect = () => {
+                    const u = users.value.find(u => (u.id || u._id) === forms.value.generate.user_id);
+                    forms.value.generate.user_name = u ? u.name : '';
+                };
+
+                const onQueueSelect = () => {
+                    const q = queues.value.find(q => (q._id || q.id) === forms.value.generate.queue_id);
+                    forms.value.generate.queue_name = q ? q.name : '';
+                };
+
+                const refreshData = async () => {
+                    loading.value = true;
+                    filterUserId.value = '';
+                    try {
+                        const [u, q, t, h] = await Promise.all([
+                            axios.get(`${API}/users`),
+                            axios.get(`${API}/queues`),
+                            axios.get(`${API}/tokens`),
+                            axios.get(`${API.replace('/api', '')}/health`)
+                        ]);
+                        users.value = u.data.users || [];
+                        queues.value = q.data.queues || [];
+                        tokens.value = t.data.tokens || [];
+                        apiHealthy.value = h.data.status === 'healthy';
+
+                    } catch (e) {
+                        apiHealthy.value = false;
+                        showToast('Failed to sync with API Gateway', 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const fetchUserTokens = async () => {
+                    if (!filterUserId.value) return refreshData();
+                    loading.value = true;
+                    try {
+                        const res = await axios.get(`${API}/tokens/user/${filterUserId.value}`);
+                        tokens.value = res.data.tokens || [];
+                    } catch (e) {
+                        showToast('Could not fetch user history', 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const generateToken = async () => {
+                    submitting.value = true;
+                    try {
+                        const res = await axios.post(`${API}/tokens/generate`, forms.value.generate);
+                        showToast(`Token Generated: ${res.data.token_number}`);
+                        forms.value.generate = { user_id: '', queue_id: '', user_name: '', queue_name: '', service_type: 'general' };
+                        refreshData();
+                    } catch (e) {
+                        showToast(e.response?.data?.error || 'Generation failed', 'error');
+                    } finally {
+                        submitting.value = false;
+                    }
+                };
+
+                const updateStatus = async (id, status) => {
+                    try {
+                        await axios.put(`${API}/tokens/status/${id}`, { status });
+                        showToast(`Token marked as ${status}`);
+                        refreshData();
+                    } catch (e) {
+                        showToast('Status update failed', 'error');
+                    }
+                };
+
+                const getTokenDetails = async (id) => {
+                    try {
+                        const res = await axios.get(`${API}/tokens/${id}`);
+                        selectedToken.value = res.data;
+                        modals.detail.show = true;
+                    } catch (e) {
+                        showToast('Could not fetch metadata', 'error');
+                    }
+                };
+
+                const formatDate = (d) => {
+                    if (!d) return 'N/A';
+                    return new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                };
+
+                onMounted(refreshData);
+
+                return {
+                    loading, submitting, apiHealthy, users, queues, tokens, selectedToken, modals, forms, filterUserId, toast,
+                    refreshData, generateToken, updateStatus, getTokenDetails, formatDate, onUserSelect, onQueueSelect, fetchUserTokens
+                };
+            }
+        }).mount('#app');
+    </script>
+
+    <style>
+        .toast-enter-active, .toast-leave-active { transition: all 0.4s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(30px); }
+    </style>
+</body>
+</html>
