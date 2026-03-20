@@ -35,3 +35,17 @@ jobs:
 
       - name: Push Token Service Image
         run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/token-service:latest
+
+      # Add notification-service
+      - name: Build Notification Service Image
+        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/notification-service:latest ./notification-service
+
+      - name: Push Notification Service Image
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/notification-service:latest
+
+        # Add frontend
+      - name: Build Frontend Image
+        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/frontend:latest ./frontend
+
+      - name: Push Frontend Image
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/frontend:latest
