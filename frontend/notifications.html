@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notification Service Explorer - Smart Queue</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [v-cloak] { display: none; }
+        .gradient-bg { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
+        .notification-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .notification-card:hover { transform: translateY(-2px); shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .unread-dot { width: 8px; height: 8px; background-color: #6366f1; border-radius: 50%; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+    <div id="app" v-cloak>
+        <!-- Header -->
+        <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-20 items-center">
+                    <div class="flex items-center space-x-3">
+                        <div class="gradient-bg p-2.5 rounded-xl text-white shadow-lg">
+                            <i class="fas fa-bell text-2xl"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-black tracking-tight text-slate-800">Notification <span class="text-indigo-600">Explorer</span></h1>
+                            <div class="flex items-center space-x-2">
+                                <span class="w-2 h-2 rounded-full" :class="apiHealthy ? 'bg-green-500' : 'bg-red-500'"></span>
+                                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">{{ apiHealthy ? 'Healthy' : 'Offline' }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-6">
+                        <!-- Stats Summary -->
+                        <div v-if="stats" class="hidden md:flex space-x-6 border-r border-slate-200 pr-6 mr-6">
+                            <div class="text-center">
+                                <div class="text-[10px] font-black text-slate-400 uppercase">Total</div>
+                                <div class="text-sm font-bold text-slate-800">{{ stats.total_notifications }}</div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-[10px] font-black text-slate-400 uppercase">Last 24h</div>
+                                <div class="text-sm font-bold text-indigo-600">{{ stats.notifications_last_24h }}</div>
+                            </div>
+                        </div>
+                        <a href="index.html" class="text-sm font-bold text-slate-500 hover:text-indigo-600 transition-colors">
+                            <i class="fas fa-arrow-left mr-2"></i>Dashboard
+                        </a>
+                        <button @click="refreshData" class="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+                            <i class="fas fa-sync-alt" :class="{'animate-spin': loading}"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                
+                <!-- Sidebar: Send Notification & Filters -->
+                <div class="lg:col-span-4 space-y-8">
+                    <!-- Send Notification Form -->
+                    <section class="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
+                        <h2 class="text-lg font-bold mb-6 flex items-center text-slate-800">
+                            <i class="fas fa-paper-plane text-indigo-500 mr-3"></i>Broadcast Alert
+                        </h2>
+                        <form @submit.prevent="sendNotification" class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Target User</label>
+                                <select v-model="forms.send.user_id" @change="onUserSelect" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                                    <option value="">Select User</option>
+                                    <option v-for="u in users" :key="u.id || u._id" :value="u.id || u._id">{{ u.name }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Target Token</label>
+                                <select v-model="forms.send.token_id" @change="onTokenSelect" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                                    <option value="">Select Token</option>
+                                    <option v-for="t in tokens" :key="t.token_id" :value="t.token_id">{{ t.token_number }} ({{ t.user_name }})</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Alert Type</label>
+                                <select v-model="forms.send.type" class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                                    <option value="token_generated">Token Generated</option>
+                                    <option value="token_called">Token Called</option>
+                                    <option value="token_reminder">Token Reminder</option>
+                                    <option value="queue_update">Queue Update</option>
+                                    <option value="system_alert">System Alert</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Message</label>
+                                <textarea v-model="forms.send.message" required placeholder="Type your notification message here..."
+                                    class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 text-sm"></textarea>
+                            </div>
+                            <button type="submit" :disabled="submitting || !forms.send.user_id || !forms.send.token_id"
+                                class="w-full gradient-bg text-white font-black py-4 rounded-xl shadow-indigo-100 shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 mt-4">
+                                <span v-if="submitting">SENDING...</span>
+                                <span v-else>SEND NOTIFICATION</span>
+                            </button>
+                        </form>
+                    </section>
+
+                    <!-- User Filter -->
+                    <section class="bg-slate-800 rounded-3xl shadow-xl p-8 text-white">
+                        <h2 class="text-lg font-bold mb-6 flex items-center">
+                            <i class="fas fa-history text-indigo-400 mr-3"></i>User Inbox
+                        </h2>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Filter by User</label>
+                                <select v-model="filterUserId" @change="fetchUserNotifications" class="w-full bg-slate-700 border-0 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <option value="">All Notifications</option>
+                                    <option v-for="u in users" :key="u.id || u._id" :value="u.id || u._id">{{ u.name }}</option>
+                                </select>
+                            </div>
+                            <div class="pt-4 flex flex-col space-y-2">
+                                <div class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Type Breakdown</div>
+                                <div v-if="stats" class="space-y-1">
+                                    <div v-for="(count, type) in stats.notifications_by_type" :key="type" class="flex justify-between text-xs">
+                                        <span class="text-slate-400 capitalize">{{ type.replace('_', ' ') }}</span>
+                                        <span class="font-bold">{{ count }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Main: Notification Feed -->
+                <div class="lg:col-span-8 space-y-6">
+                    <div class="flex justify-between items-end mb-4">
+                        <div>
+                            <h2 class="text-2xl font-black text-slate-800">Notification Feed</h2>
+                            <p class="text-slate-400 text-sm">Real-time alerts and system logs</p>
+                        </div>
+                    </div>
+
+                    <div v-if="notifications.length === 0" class="bg-white rounded-3xl p-20 text-center border-2 border-dashed border-slate-200">
+                        <i class="fas fa-bell-slash text-slate-200 text-6xl mb-4"></i>
+                        <h3 class="text-xl font-bold text-slate-400">In-box is empty</h3>
+                        <p class="text-slate-300">Broadcast an alert to see it here.</p>
+                    </div>
+
+                    <div v-else class="space-y-4">
+                        <div v-for="n in notifications" :key="n.notification_id" 
+                            class="notification-card bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+                            :class="{'opacity-60': n.status === 'read'}">
+                            
+                            <div class="flex items-start space-x-4">
+                                <div class="mt-1">
+                                    <div v-if="n.status !== 'read'" class="unread-dot"></div>
+                                    <div v-else class="w-2 h-2"></div>
+                                </div>
+                                <div>
+                                    <div class="flex items-center space-x-2 mb-1">
+                                        <span class="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-slate-50 text-slate-400">
+                                            {{ n.type.replace('_', ' ') }}
+                                        </span>
+                                        <span class="text-[10px] text-slate-300 font-mono">{{ formatDate(n.created_at) }}</span>
+                                    </div>
+                                    <p class="text-sm font-bold text-slate-700 mb-1">{{ n.message }}</p>
+                                    <div class="flex items-center space-x-4 text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                                        <span><i class="fas fa-user mr-1 text-indigo-300"></i>{{ n.user_name }}</span>
+                                        <span><i class="fas fa-hashtag mr-1 text-indigo-300"></i>{{ n.token_number }}</span>
+                                        <span><i class="fas fa-layer-group mr-1 text-indigo-300"></i>{{ n.queue_name }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center space-x-2 ml-6 md:ml-0">
+                                <button v-if="n.status !== 'read'" @click="markAsRead(n.notification_id)" 
+                                    class="p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all" title="Mark as Read">
+                                    <i class="fas fa-check-double"></i>
+                                </button>
+                                <button @click="deleteNotification(n.notification_id)" 
+                                    class="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all" title="Delete">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Pagination (Simple) -->
+                        <div v-if="pagination && pagination.pages > 1" class="flex justify-center pt-8">
+                            <div class="flex space-x-2">
+                                <button @click="changePage(pagination.page - 1)" :disabled="pagination.page === 1"
+                                    class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold disabled:opacity-30">Prev</button>
+                                <span class="px-4 py-2 text-sm font-bold text-slate-400">Page {{ pagination.page }} of {{ pagination.pages }}</span>
+                                <button @click="changePage(pagination.page + 1)" :disabled="pagination.page === pagination.pages"
+                                    class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold disabled:opacity-30">Next</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Toast -->
+        <transition name="toast">
+            <div v-if="toast.show" class="fixed bottom-10 right-10 z-[200]">
+                <div :class="toast.type === 'error' ? 'bg-red-600' : 'bg-slate-800'" class="text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center space-x-3 border border-white/10 backdrop-blur-md">
+                    <i :class="toast.type === 'error' ? 'fas fa-exclamation-triangle' : 'fas fa-check-circle'"></i>
+                    <span class="font-bold text-sm">{{ toast.message }}</span>
+                </div>
+            </div>
+        </transition>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+        const API = 'http://localhost:8080/api';
+
+        createApp({
+            setup() {
+                const loading = ref(true);
+                const submitting = ref(false);
+                const apiHealthy = ref(false);
+                const users = ref([]);
+                const tokens = ref([]);
+                const notifications = ref([]);
+                const stats = ref(null);
+                const filterUserId = ref('');
+                const pagination = ref(null);
+
+                const forms = ref({
+                    send: { type: 'token_reminder', user_id: '', token_id: '', queue_id: '', token_number: '', message: '', priority: 3 }
+                });
+
+                const toast = ref({ show: false, message: '', type: 'success' });
+
+                const showToast = (message, type = 'success') => {
+                    toast.value = { show: true, message, type };
+                    setTimeout(() => toast.value.show = false, 3000);
+                };
+
+                const onUserSelect = () => {
+                    // Filter tokens for selected user
+                    const uid = forms.value.send.user_id;
+                    if (!uid) return;
+                };
+
+                const onTokenSelect = () => {
+                    const t = tokens.value.find(t => t.token_id === forms.value.send.token_id);
+                    if (t) {
+                        forms.value.send.user_id = t.user_id;
+                        forms.value.send.token_number = t.token_number;
+                        forms.value.send.queue_id = t.queue_id;
+                        forms.value.send.message = `Reminder: Token ${t.token_number} for ${t.user_name} in ${t.queue_name}.`;
+                    }
+                };
+
+                const refreshData = async (page = 1) => {
+                    loading.value = true;
+                    try {
+                        const [u, t, n, s, h] = await Promise.all([
+                            axios.get(`${API}/users`),
+                            axios.get(`${API}/tokens`),
+                            axios.get(`${API}/notifications?page=${page}&limit=15${filterUserId.value ? '&user_id='+filterUserId.value : ''}`),
+                            axios.get(`${API}/notifications/stats`),
+                            axios.get(`${API.replace('/api', '')}/health`)
+                        ]);
+                        users.value = u.data.users || [];
+                        tokens.value = t.data.tokens || [];
+                        notifications.value = n.data.notifications || [];
+                        pagination.value = n.data.pagination;
+                        stats.value = s.data;
+                        apiHealthy.value = h.data.status === 'healthy';
+                    } catch (e) {
+                        apiHealthy.value = false;
+                        showToast('Failed to sync with API Gateway', 'error');
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                const fetchUserNotifications = () => refreshData(1);
+                const changePage = (page) => refreshData(page);
+
+                const sendNotification = async () => {
+                    submitting.value = true;
+                    try {
+                        const res = await axios.post(`${API}/notifications/send`, forms.value.send);
+                        showToast('Notification Dispatched!');
+                        forms.value.send = { type: 'token_reminder', user_id: '', token_id: '', queue_id: '', token_number: '', message: '', priority: 3 };
+                        refreshData();
+                    } catch (e) {
+                        showToast(e.response?.data?.error || 'Broadcast failed', 'error');
+                    } finally {
+                        submitting.value = false;
+                    }
+                };
+
+                const markAsRead = async (id) => {
+                    try {
+                        await axios.put(`${API}/notifications/${id}`, { status: 'read' });
+                        refreshData();
+                    } catch (e) {
+                        showToast('Status update failed', 'error');
+                    }
+                };
+
+                const deleteNotification = async (id) => {
+                    if (!confirm('Permanent delete?')) return;
+                    try {
+                        await axios.delete(`${API}/notifications/${id}`);
+                        showToast('Deleted');
+                        refreshData();
+                    } catch (e) {
+                        showToast('Delete failed', 'error');
+                    }
+                };
+
+                const formatDate = (d) => {
+                    if (!d) return 'N/A';
+                    const date = new Date(d);
+                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                };
+
+                onMounted(refreshData);
+
+                return {
+                    loading, submitting, apiHealthy, users, tokens, notifications, stats, filterUserId, pagination, forms, toast,
+                    refreshData, sendNotification, markAsRead, deleteNotification, formatDate, onUserSelect, onTokenSelect, fetchUserNotifications, changePage
+                };
+            }
+        }).mount('#app');
+    </script>
+
+    <style>
+        .toast-enter-active, .toast-leave-active { transition: all 0.4s ease; }
+        .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(30px); }
+    </style>
+</body>
+</html>
