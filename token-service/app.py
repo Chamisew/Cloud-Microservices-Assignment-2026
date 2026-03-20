@@ -36,6 +36,8 @@ import time
 import string
 import random
 
+from flask_swagger_ui import get_swaggerui_blueprint
+
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
@@ -51,8 +53,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Service Configuration
-# Security: Using environment variables for service URLs and database connection
-NOTIFICATION_SERVICE_URL = os.environ.get('NOTIFICATION_SERVICE_URL', 'http://localhost:5004')
+# Note: Services no longer communicate directly - all communication goes through API Gateway
+# Auto-detect environment: use localhost for local dev, api-gateway for Docker
+def get_api_gateway_url():
+    """Determine API Gateway URL based on environment"""
+    # If explicitly set, use the environment variable
+    env_url = os.environ.get('API_GATEWAY_URL')
+    if env_url:
+        return env_url
+    
+    # Check if running in Docker by looking for .dockerenv file or specific env vars
+    if os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER'):
+        return 'http://api-gateway:8080'
+    
+    # Default to localhost for local development
+    return 'http://localhost:8080'
+
+API_GATEWAY_URL = get_api_gateway_url()
 MONGO_URI = os.environ.get('MONGO_URI')
 
 if not MONGO_URI:
@@ -116,36 +133,33 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-@retry_on_failure(max_retries=3, delay=1)
 def call_notification_service(notification_data):
     """
-    Call Notification Service to send alert
-    Security: Uses service-to-service authentication
+    Call Notification Service via API Gateway to send alert
     This is the CRUCIAL integration point - called immediately after saving token
     """
-    url = f"{NOTIFICATION_SERVICE_URL}/api/notifications/send"
+    url = f"{API_GATEWAY_URL}/api/notifications/send"
     headers = {
         'Content-Type': 'application/json',
         'User-Agent': 'Token-Service/1.0'
     }
     
-    # Add service authentication if API key is configured
-    api_key = os.environ.get('SERVICE_API_KEY')
-    if api_key:
-        headers['X-Service-Key'] = api_key
-    
-    logger.info(f"Calling Notification Service: {url}")
+    logger.info(f"Calling Notification Service via API Gateway: {url}")
     logger.info(f"Notification data: {notification_data}")
     
-    response = requests.post(url, json=notification_data, headers=headers, timeout=15)
-    
-    if response.status_code in [200, 201]:
-        notification_response = response.json()
-        logger.info(f"Notification sent successfully: {notification_response.get('notification_id')}")
-        return notification_response
-    else:
-        logger.error(f"Notification Service error {response.status_code}: {response.text}")
-        response.raise_for_status()
+    try:
+        response = requests.post(url, json=notification_data, headers=headers, timeout=15)
+        
+        if response.status_code in [200, 201]:
+            notification_response = response.json()
+            logger.info(f"Notification sent successfully: {notification_response.get('notification_id')}")
+            return notification_response
+        else:
+            logger.error(f"Notification Service error {response.status_code}: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Notification Service: {e}")
+        return None
 
 # Input Validation Functions
 def validate_token_request(data):
@@ -194,20 +208,20 @@ def health_check():
         # Test database connection
         client.admin.command('ping')
         
-        # Test Notification Service connectivity
-        notification_status = 'unknown'
+        # Test API Gateway connectivity
+        gateway_status = 'unknown'
         try:
-            requests.get(f"{NOTIFICATION_SERVICE_URL}/health", timeout=3)
-            notification_status = 'connected'
+            requests.get(f"{API_GATEWAY_URL}/health", timeout=3)
+            gateway_status = 'connected'
         except:
-            notification_status = 'disconnected'
+            gateway_status = 'disconnected'
         
         return jsonify({
             'status': 'healthy',
             'service': 'Token Service',
             'timestamp': datetime.utcnow().isoformat(),
             'database': 'connected',
-            'notification_service': notification_status
+            'api_gateway': gateway_status
         }), 200
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -300,6 +314,7 @@ def generate_token():
         notification_data = {
             'type': 'token_generated',
             'user_id': token_request['user_id'],
+            'queue_id': token_request['queue_id'],
             'user_name': token_request['user_name'],
             'token_id': token_id,
             'token_number': token_number,
@@ -311,7 +326,10 @@ def generate_token():
         
         try:
             notification_response = call_notification_service(notification_data)
-            logger.info(f"Notification sent successfully for token {token_id}")
+            if notification_response is None:
+                notification_response = {'error': 'Notification service call failed'}
+            else:
+                logger.info(f"Notification sent successfully for token {token_id}")
         except Exception as e:
             logger.error(f"Failed to send notification for token {token_id}: {e}")
             # Note: We don't fail the entire request if notification fails
@@ -330,18 +348,60 @@ def generate_token():
         }
         
         # Include notification status in response
-        if 'error' not in notification_response:
+        if isinstance(notification_response, dict) and 'error' not in notification_response:
             response_data['notification_sent'] = True
             response_data['notification_id'] = notification_response.get('notification_id')
         else:
             response_data['notification_sent'] = False
-            response_data['notification_error'] = notification_response.get('error')
+            response_data['notification_error'] = notification_response.get('error') if isinstance(notification_response, dict) else 'Unknown notification error'
         
         logger.info(f"Token generation completed successfully: {token_id}")
         return jsonify(response_data), 201
         
     except Exception as e:
         logger.error(f"Error generating token: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/tokens', methods=['GET'])
+def get_tokens():
+    """
+    Retrieve all tokens from the system
+    GET /api/tokens
+    Response: List of recent tokens
+    """
+    try:
+        # Query database for all tokens, sorted by creation date
+        cursor = tokens_collection.find(
+            {},
+            {
+                '_id': 0,
+                'token_id': 1,
+                'token_number': 1,
+                'user_id': 1,
+                'queue_id': 1,
+                'user_name': 1,
+                'queue_name': 1,
+                'service_type': 1,
+                'status': 1,
+                'created_at': 1,
+                'expires_at': 1
+            }
+        ).sort('created_at', -1).limit(100)
+        
+        # Convert cursor to list and format response
+        tokens = []
+        for token in cursor:
+            if token.get('created_at'):
+                token['created_at'] = token['created_at'].isoformat()
+            if token.get('expires_at'):
+                token['expires_at'] = token['expires_at'].isoformat()
+            tokens.append(token)
+            
+        logger.info(f"Retrieved {len(tokens)} tokens globally")
+        return jsonify({'tokens': tokens}), 200
+        
+    except Exception as e:
+        logger.error(f"Error retrieving tokens: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/tokens/<token_id>', methods=['GET'])
@@ -362,6 +422,7 @@ def get_token(token_id):
         token = tokens_collection.find_one(
             {'token_id': token_id},
             {
+                '_id': 0,  
                 'token_id': 1,
                 'token_number': 1,
                 'user_id': 1,
@@ -417,8 +478,12 @@ def get_user_tokens(user_id):
         cursor = tokens_collection.find(
             {'user_id': user_id},
             {
+                '_id': 0,
                 'token_id': 1,
                 'token_number': 1,
+                'user_id': 1,
+                'queue_id': 1,
+                'user_name': 1,
                 'queue_name': 1,
                 'service_type': 1,
                 'status': 1,
@@ -430,8 +495,10 @@ def get_user_tokens(user_id):
         # Convert cursor to list and format response
         tokens = []
         for token in cursor:
-            token['created_at'] = token['created_at'].isoformat()
-            token['expires_at'] = token['expires_at'].isoformat()
+            if token.get('created_at'):
+                token['created_at'] = token['created_at'].isoformat()
+            if token.get('expires_at'):
+                token['expires_at'] = token['expires_at'].isoformat()
             tokens.append(token)
         
         logger.info(f"Retrieved {len(tokens)} tokens for user {user_id}")
@@ -498,6 +565,7 @@ def update_token_status(token_id):
         updated_token = tokens_collection.find_one(
             {'token_id': token_id},
             {
+                '_id': 0,  # Exclude MongoDB _id to avoid JSON serialization error
                 'token_id': 1,
                 'token_number': 1,
                 'user_name': 1,
@@ -535,13 +603,28 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({'error': 'Internal server error'}), 500
 
+# Swagger UI Configuration
+SWAGGER_URL = '/api/docs'  # URL for exposing Swagger UI
+API_URL = '/static/swagger.yaml'  # Our API definition
+
+# Call factory function to create our blueprint
+swaggerui_blueprint = get_swaggerui_blueprint(
+    SWAGGER_URL,
+    API_URL,
+    config={
+        'app_name': "Token Service"
+    }
+)
+
+app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
+
 # Application startup
 if __name__ == '__main__':
     # Get port from environment variable or default to 5003
     port = int(os.environ.get('PORT', 5003))
     
     logger.info(f"Starting Token Service on port {port}")
-    logger.info(f"Notification Service URL: {NOTIFICATION_SERVICE_URL}")
+    logger.info(f"API Gateway URL: {API_GATEWAY_URL}")
     logger.info("Database connection established")
     logger.info("Ready to serve requests")
     
