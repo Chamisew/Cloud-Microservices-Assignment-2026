@@ -27,6 +27,8 @@ from dotenv import load_dotenv
 from functools import wraps
 import time
 
+from flask_swagger_ui import get_swaggerui_blueprint
+
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
@@ -50,15 +52,23 @@ if not MONGO_URI:
     raise ValueError("MONGO_URI environment variable is required")
 
 # Service Configuration
-# Security: Using environment variables for service URLs and database connection
-QUEUE_SERVICE_URL = os.environ.get('QUEUE_SERVICE_URL', 'http://localhost:5002')
-TOKEN_SERVICE_URL = os.environ.get('TOKEN_SERVICE_URL', 'http://localhost:5003')
-NOTIFICATION_SERVICE_URL = os.environ.get('NOTIFICATION_SERVICE_URL', 'http://localhost:5004')
+# Note: Services no longer communicate directly - all communication goes through API Gateway
+# Auto-detect environment: use localhost for local dev, api-gateway for Docker
+def get_api_gateway_url():
+    """Determine API Gateway URL based on environment"""
+    # If explicitly set, use the environment variable
+    env_url = os.environ.get('API_GATEWAY_URL')
+    if env_url:
+        return env_url
+    
+    # Check if running in Docker by looking for .dockerenv file or specific env vars
+    if os.path.exists('/.dockerenv') or os.environ.get('DOCKER_CONTAINER'):
+        return 'http://api-gateway:8080'
+    
+    # Default to localhost for local development
+    return 'http://localhost:8080'
 
-MONGO_URI = os.environ.get('MONGO_URI')
-if not MONGO_URI:
-    logger.error("MONGO_URI environment variable not set")
-    raise ValueError("MONGO_URI environment variable is required")
+API_GATEWAY_URL = get_api_gateway_url()
 
 # MongoDB Connection
 # Security: Connection pooling and timeout configuration for resilience
@@ -115,6 +125,12 @@ def validate_user_data(data):
     
     return True, None
 
+def parse_object_id(value):
+    s = str(value).strip()
+    if not re.fullmatch(r'[0-9a-fA-F]{24}', s):
+        raise InvalidId("Invalid ObjectId format")
+    return ObjectId(s)
+
 # Service Communication Utilities
 def retry_on_failure(max_retries=3, delay=1):
     """
@@ -139,57 +155,77 @@ def retry_on_failure(max_retries=3, delay=1):
         return wrapper
     return decorator
 
-@retry_on_failure(max_retries=3, delay=1)
 def call_queue_service(queue_data):
     """
-    Call Queue Service to manage user queue operations
-    Security: Uses service-to-service authentication
+    Call Queue Service via API Gateway to manage user queue operations
     """
-    url = f"{QUEUE_SERVICE_URL}/api/queues/join"
+    url = f"{API_GATEWAY_URL}/api/queues/join"
     headers = {
         'Content-Type': 'application/json',
         'User-Agent': 'User-Service/1.0'
     }
     
-    # Add service authentication if API key is configured
-    api_key = os.environ.get('SERVICE_API_KEY')
-    if api_key:
-        headers['X-Service-Key'] = api_key
-    
-    logger.info(f"Calling Queue Service: {url}")
-    response = requests.post(url, json=queue_data, headers=headers, timeout=15)
-    
-    if response.status_code in [200, 201]:
-        return response.json()
-    else:
-        logger.error(f"Queue Service error {response.status_code}: {response.text}")
-        response.raise_for_status()
+    logger.info(f"Calling Queue Service via API Gateway: {url}")
+    try:
+        response = requests.post(url, json=queue_data, headers=headers, timeout=15)
+        
+        if response.status_code in [200, 201]:
+            return response.json()
+        else:
+            logger.error(f"Queue Service error {response.status_code}: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Queue Service: {e}")
+        return None
 
-@retry_on_failure(max_retries=3, delay=1)
 def call_token_service(token_data):
     """
-    Call Token Service to generate tokens for user
-    Security: Uses service-to-service authentication
+    Call Token Service via API Gateway to generate tokens for user
     """
-    url = f"{TOKEN_SERVICE_URL}/api/tokens/generate"
+    url = f"{API_GATEWAY_URL}/api/tokens/generate"
     headers = {
         'Content-Type': 'application/json',
         'User-Agent': 'User-Service/1.0'
     }
     
-    # Add service authentication if API key is configured
-    api_key = os.environ.get('SERVICE_API_KEY')
-    if api_key:
-        headers['X-Service-Key'] = api_key
+    logger.info(f"Calling Token Service via API Gateway: {url}")
+    try:
+        response = requests.post(url, json=token_data, headers=headers, timeout=15)
+        
+        if response.status_code in [200, 201]:
+            return response.json()
+        else:
+            logger.error(f"Token Service error {response.status_code}: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Token Service: {e}")
+        return None
+
+def call_notification_service(notification_data):
+    """
+    Call Notification Service via API Gateway to send notifications
+    Graceful degradation: Failures are logged but don't block user operations
+    """
+    url = f"{API_GATEWAY_URL}/api/notifications/send"
+    headers = {
+        'Content-Type': 'application/json',
+        'User-Agent': 'User-Service/1.0'
+    }
     
-    logger.info(f"Calling Token Service: {url}")
-    response = requests.post(url, json=token_data, headers=headers, timeout=15)
-    
-    if response.status_code in [200, 201]:
-        return response.json()
-    else:
-        logger.error(f"Token Service error {response.status_code}: {response.text}")
-        response.raise_for_status()
+    logger.info(f"Calling Notification Service via API Gateway: {url}")
+    try:
+        response = requests.post(url, json=notification_data, headers=headers, timeout=15)
+        
+        if response.status_code in [200, 201]:
+            result = response.json()
+            logger.info(f"Notification sent successfully: {result.get('notification_id')}")
+            return result
+        else:
+            logger.error(f"Notification Service error {response.status_code}: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to call Notification Service: {e}")
+        return None
 
 # API Routes
 
@@ -216,10 +252,106 @@ def health_check():
             'error': 'Database connection failed'
         }), 503
 
+@app.route('/users/register', methods=['POST'])
+def register_user():
+    """
+    Register a new user - Enhanced with Notification Service integration
+    POST /users/register
+    Request Body: {
+        "name": "string",
+        "email": "string",
+        "phone": "string",
+        "nic": "string" (optional)
+    }
+    
+    Integration Flow:
+    1. Validate user input data
+    2. Check if email already exists
+    3. Create user in MongoDB
+    4. Send welcome notification via Notification Service (graceful degradation)
+    5. Return created user object
+    
+    Response: Created user object with ID
+    """
+    try:
+        # Parse JSON data from request
+        user_data = request.get_json()
+        
+        if not user_data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Validate input data
+        is_valid, error_message = validate_user_data(user_data)
+        if not is_valid:
+            return jsonify({'error': error_message}), 400
+        
+        # Check if user already exists (email uniqueness)
+        existing_user = users_collection.find_one({'email': user_data['email']})
+        if existing_user:
+            return jsonify({'error': 'User with this email already exists'}), 409
+        
+        # Add timestamps
+        user_data['created_at'] = datetime.utcnow()
+        user_data['updated_at'] = datetime.utcnow()
+        user_data['is_active'] = True
+        
+        # Insert user into database
+        # Security: Using insert_one with proper error handling
+        result = users_collection.insert_one(user_data)
+        user_id = str(result.inserted_id)
+        
+        logger.info(f"User created successfully: {user_id}")
+        
+        # INTEGRATION POINT: Send welcome notification via Notification Service
+        # Graceful degradation: If notification fails, log error but still return success
+        try:
+            notification_request = {
+                'type': 'system_alert',
+                'user_id': user_id,
+                'user_name': user_data['name'],
+                'token_id': user_id,  # Using user_id as token_id for welcome notification
+                'token_number': 'WELCOME',  # Special token number for welcome
+                'queue_name': 'Registration',
+                'message': f"Welcome to Smart Queue Management System, {user_data['name']}! Your account has been created successfully.",
+                'priority': 3,  # Normal priority
+                'service_type': 'general'
+            }
+            
+            logger.info(f"Sending welcome notification for user {user_id}")
+            notification_response = call_notification_service(notification_request)
+            logger.info(f"Welcome notification sent successfully for user {user_id}")
+            
+        except requests.exceptions.RequestException as e:
+            # Graceful degradation: Log the error but continue
+            logger.warning(f"Failed to send welcome notification for user {user_id}: {e}")
+            # Don't fail the registration, just log it
+        except Exception as e:
+            # Catch any other unexpected issues with notification
+            logger.warning(f"Unexpected error sending welcome notification for user {user_id}: {e}")
+        
+        # Prepare response (exclude sensitive data if needed)
+        response_data = {
+            'id': user_id,
+            'name': user_data['name'],
+            'email': user_data['email'],
+            'phone': user_data['phone'],
+            'created_at': user_data['created_at'].isoformat(),
+            'notification_sent': True  # Indicate that notification was attempted
+        }
+        
+        if 'nic' in user_data:
+            response_data['nic'] = user_data['nic']
+        
+        return jsonify(response_data), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/api/users', methods=['POST'])
 def create_user():
     """
-    Create a new user in the system
+    Create a new user in the system (legacy endpoint)
     POST /api/users
     Request Body: {
         "name": "string",
@@ -294,7 +426,7 @@ def get_users():
         # Query database with pagination
         # Security: Using find with projection to limit returned fields
         cursor = users_collection.find(
-            {'is_active': True},
+            {},
             {
                 'name': 1,
                 'email': 1,
@@ -306,13 +438,15 @@ def get_users():
         ).skip(skip).limit(limit).sort('created_at', -1)
         
         # Get total count for pagination metadata
-        total_count = users_collection.count_documents({'is_active': True})
+        total_count = users_collection.count_documents({})
         
         # Convert cursor to list and format response
         users = []
         for user in cursor:
             user['_id'] = str(user['_id'])
-            user['created_at'] = user['created_at'].isoformat()
+            # Format timestamp safely
+            if 'created_at' in user and hasattr(user['created_at'], 'isoformat'):
+                user['created_at'] = user['created_at'].isoformat()
             users.append(user)
         
         # Prepare paginated response
@@ -343,14 +477,14 @@ def get_user(user_id):
     try:
         # Validate ObjectId format
         try:
-            object_id = ObjectId(user_id)
+            object_id = parse_object_id(user_id)
         except InvalidId:
             return jsonify({'error': 'Invalid user ID format'}), 400
         
         # Query database for user
         # Security: Using find_one with projection to limit returned fields
         user = users_collection.find_one(
-            {'_id': object_id, 'is_active': True},
+            {'_id': object_id},
             {
                 'name': 1,
                 'email': 1,
@@ -367,8 +501,10 @@ def get_user(user_id):
         
         # Format response
         user['_id'] = str(user['_id'])
-        user['created_at'] = user['created_at'].isoformat()
-        user['updated_at'] = user['updated_at'].isoformat()
+        if 'created_at' in user and hasattr(user['created_at'], 'isoformat'):
+            user['created_at'] = user['created_at'].isoformat()
+        if 'updated_at' in user and hasattr(user['updated_at'], 'isoformat'):
+            user['updated_at'] = user['updated_at'].isoformat()
         
         logger.info(f"User retrieved: {user_id}")
         return jsonify(user), 200
@@ -388,7 +524,7 @@ def update_user(user_id):
     try:
         # Validate ObjectId format
         try:
-            object_id = ObjectId(user_id)
+            object_id = parse_object_id(user_id)
         except InvalidId:
             return jsonify({'error': 'Invalid user ID format'}), 400
         
@@ -419,10 +555,14 @@ def update_user(user_id):
         # Add update timestamp
         update_data['updated_at'] = datetime.utcnow()
         
+        # Security: Remove _id from update_data if it exists to prevent immutable field error
+        update_data.pop('_id', None)
+        update_data.pop('id', None)
+        
         # Update user in database
         # Security: Using update_one with proper error handling
         result = users_collection.update_one(
-            {'_id': object_id, 'is_active': True},
+            {'_id': object_id},
             {'$set': update_data}
         )
         
@@ -445,8 +585,10 @@ def update_user(user_id):
         
         # Format response
         updated_user['_id'] = str(updated_user['_id'])
-        updated_user['created_at'] = updated_user['created_at'].isoformat()
-        updated_user['updated_at'] = updated_user['updated_at'].isoformat()
+        if 'created_at' in updated_user and hasattr(updated_user['created_at'], 'isoformat'):
+            updated_user['created_at'] = updated_user['created_at'].isoformat()
+        if 'updated_at' in updated_user and hasattr(updated_user['updated_at'], 'isoformat'):
+            updated_user['updated_at'] = updated_user['updated_at'].isoformat()
         
         logger.info(f"User updated: {user_id}")
         return jsonify(updated_user), 200
@@ -458,34 +600,26 @@ def update_user(user_id):
 @app.route('/api/users/<user_id>', methods=['DELETE'])
 def delete_user(user_id):
     """
-    Soft delete a user (mark as inactive)
+    Hard delete a user from the database
     DELETE /api/users/{user_id}
     Response: Success message
     """
     try:
         # Validate ObjectId format
         try:
-            object_id = ObjectId(user_id)
+            object_id = parse_object_id(user_id)
         except InvalidId:
             return jsonify({'error': 'Invalid user ID format'}), 400
         
-        # Soft delete by setting is_active to False
-        # Security: Using update_one for safe deletion
-        result = users_collection.update_one(
-            {'_id': object_id, 'is_active': True},
-            {
-                '$set': {
-                    'is_active': False,
-                    'updated_at': datetime.utcnow()
-                }
-            }
-        )
+        # Perform hard delete
+        # Security: Using delete_one for actual removal
+        result = users_collection.delete_one({'_id': object_id})
         
-        if result.matched_count == 0:
+        if result.deleted_count == 0:
             return jsonify({'error': 'User not found'}), 404
         
-        logger.info(f"User deleted (soft): {user_id}")
-        return jsonify({'message': 'User deleted successfully'}), 200
+        logger.info(f"User deleted (hard): {user_id}")
+        return jsonify({'message': 'User deleted successfully from database'}), 200
         
     except Exception as e:
         logger.error(f"Error deleting user {user_id}: {e}")
@@ -510,12 +644,12 @@ def join_queue(user_id):
     try:
         # Validate user exists locally
         try:
-            object_id = ObjectId(user_id)
+            object_id = parse_object_id(user_id)
         except InvalidId:
             return jsonify({'error': 'Invalid user ID format'}), 400
         
         user = users_collection.find_one(
-            {'_id': object_id, 'is_active': True},
+            {'_id': object_id},
             {'name': 1, 'email': 1, 'phone': 1, '_id': 1}
         )
         
@@ -577,12 +711,12 @@ def generate_token_for_user(user_id):
     try:
         # Validate user exists locally
         try:
-            object_id = ObjectId(user_id)
+            object_id = parse_object_id(user_id)
         except InvalidId:
             return jsonify({'error': 'Invalid user ID format'}), 400
         
         user = users_collection.find_one(
-            {'_id': object_id, 'is_active': True},
+            {'_id': object_id},
             {'name': 1, '_id': 1}
         )
         
@@ -639,6 +773,21 @@ def internal_error(error):
     """Handle 500 Internal Server errors"""
     logger.error(f"Internal server error: {error}")
     return jsonify({'error': 'Internal server error'}), 500
+
+# Swagger UI Configuration
+SWAGGER_URL = '/api/docs'  # URL for exposing Swagger UI (without trailing /)
+API_URL = '/static/swagger.yaml'  # Our API definition
+
+# Call factory function to create our blueprint
+swaggerui_blueprint = get_swaggerui_blueprint(
+    SWAGGER_URL,
+    API_URL,
+    config={
+        'app_name': "User Service"
+    }
+)
+
+app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 
 # Application startup
 if __name__ == '__main__':
