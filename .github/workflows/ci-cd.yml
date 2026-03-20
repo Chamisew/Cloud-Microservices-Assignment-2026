@@ -6,46 +6,44 @@ on:
       - main
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        service:
+          - user-service
+          - queue-service
+          - token-service
+          - notification-service
+          - frontend
+          - api-gateway
+    defaults:
+      run:
+        working-directory: ./
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
+      - name: Set up service context
+        id: setcontext
+        run: |
+          echo "SERVICE_PATH=${{ matrix.service }}" >> $GITHUB_ENV
+
       - name: Login to Azure Container Registry
         run: echo ${{ secrets.AZURE_REGISTRY_PASSWORD }} | docker login ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }} -u ${{ secrets.AZURE_REGISTRY_USERNAME }} --password-stdin
 
-      - name: Build User Service Image
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/user-service:latest ./user-service
+      - name: Check if service changed
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            service:
+              - '${{ matrix.service }}/**'
 
-      - name: Push User Service Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/user-service:latest
-      
-      #add queu-service
-      - name: Build Queue Service Image
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/queue-service:latest ./queue-service  
+      - name: Build ${{ matrix.service }} Image
+        if: steps.changes.outputs.service == 'true'
+        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest ./${{ matrix.service }}
 
-      - name: Push Queue Service Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/queue-service:latest  
-      
-      #add token-service
-      - name: Build Token Service Image
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/token-service:latest ./token-service
-
-      - name: Push Token Service Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/token-service:latest
-
-      # Add notification-service
-      - name: Build Notification Service Image
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/notification-service:latest ./notification-service
-
-      - name: Push Notification Service Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/notification-service:latest
-
-        # Add frontend
-      - name: Build Frontend Image
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/frontend:latest ./frontend
-
-      - name: Push Frontend Image
-        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/frontend:latest
+      - name: Push ${{ matrix.service }} Image
+        if: steps.changes.outputs.service == 'true'
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest
