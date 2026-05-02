@@ -2,11 +2,11 @@ name: Token Service CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
     paths:
       - 'token-service/**'
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
     paths:
       - 'token-service/**'
 
@@ -233,16 +233,6 @@ EOF
             }' || echo "Integration test completed"
 
   # Deployment Job (container images for Azure: .github/workflows/ci-cd.yml → ACR)
-  deploy-staging:
-    runs-on: ubuntu-latest
-    needs: integration-test
-    if: github.ref == 'refs/heads/develop'
-    steps:
-      - name: Deploy to Staging
-        run: |
-          echo "Deploying Token Service to staging environment..."
-          # Add your staging deployment logic here
-
   deploy-production:
     runs-on: ubuntu-latest
     needs: integration-test

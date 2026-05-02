@@ -2,9 +2,9 @@ name: User Service CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
 
 jobs:
   # Security Scanning Job
@@ -168,14 +168,6 @@ jobs:
 
   # Deployment Jobs
   # Images for Azure go through .github/workflows/ci-cd.yml (ACR), not Docker Hub.
-  deploy-staging:
-    runs-on: ubuntu-latest
-    needs: integration-test
-    if: github.ref == 'refs/heads/develop'
-    steps:
-      - name: Deploy to Staging
-        run: echo "Deploying to staging environment..."
-
   deploy-production:
     runs-on: ubuntu-latest
     needs: integration-test

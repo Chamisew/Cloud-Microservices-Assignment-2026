@@ -1,16 +1,23 @@
 name: Build and Push to Azure
 
-# Pushes to ACR only when files under each service folder change (see paths-filter), unless you run
-# "workflow_dispatch" which rebuilds every matrix service (useful after changing only workflows or .env).
+# Triggers:
+# - push to main → build changed services and push to ACR.
+# - pull_request targeting main → same (same-repo PRs only for ACR; fork PRs skip).
+# - workflow_dispatch → rebuild all matrix services.
+# Repo uses main only (no develop branch).
 on:
   push:
     branches:
       - main
-      - develop
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build-and-push:
+    # Forked PRs cannot use your ACR secrets; skip the job to avoid failing checks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,7 +33,9 @@ jobs:
         working-directory: ./
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up service context
         id: setcontext
