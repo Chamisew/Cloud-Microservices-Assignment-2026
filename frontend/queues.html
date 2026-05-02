@@ -306,7 +306,7 @@
                             axios.get(`${API}/users`),
                             axios.get(`${API}/queues`),
                             axios.get(`${API}/queues/assignments`),
-                            axios.get(`${API.replace('/api', '')}/health`)
+                            axios.get('https://api-gateway.nicebay-5c116edb.eastasia.azurecontainerapps.io/health')
                         ]);
                         users.value = u.data.users || [];
                         queues.value = q.data.queues || [];
