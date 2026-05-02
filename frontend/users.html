@@ -290,7 +290,7 @@
 
                 const checkHealth = async () => {
                     try {
-                        const res = await axios.get(`${API.replace('/api', '')}/health`);
+                        const res = await axios.get('https://api-gateway.nicebay-5c116edb.eastasia.azurecontainerapps.io/health');
                         health.value = res.data;
                     } catch (e) {
                         health.value = { status: 'unreachable' };

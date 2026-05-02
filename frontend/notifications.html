@@ -262,7 +262,7 @@
                             axios.get(`${API}/tokens`),
                             axios.get(`${API}/notifications?page=${page}&limit=15${filterUserId.value ? '&user_id='+filterUserId.value : ''}`),
                             axios.get(`${API}/notifications/stats`),
-                            axios.get(`${API.replace('/api', '')}/health`)
+                            axios.get('https://api-gateway.nicebay-5c116edb.eastasia.azurecontainerapps.io/health')
                         ]);
                         users.value = u.data.users || [];
                         tokens.value = t.data.tokens || [];
