@@ -1,4 +1,4 @@
-name: Security Scan
+name: SonarCloud Code Analysis
 on:
   push:
     branches: [ "main" ]
@@ -6,17 +6,31 @@ on:
     types: [opened, synchronize, reopened]
 jobs:
   sonarcloud:
-    name: SonarCloud
+    name: SonarCloud Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Important for SonarCloud
-      - name: SonarCloud Scan
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+          fetch-depth: 0  # Important for SonarCloud to analyze full history
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          pip install pylint
+          cd user-service && pip install -r requirements.txt || true
+          cd ../token-service && pip install -r requirements.txt || true
+          cd ../queue-service && pip install -r requirements.txt || true
+          cd ../notification-service && pip install -r requirements.txt || true
+      
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
             -Dsonar.projectKey=Chamisew_Cloud-Microservices-Assignment-2026
