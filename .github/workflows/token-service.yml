@@ -97,10 +97,18 @@ jobs:
           cd token-service
           # Run container in background
           docker run -d --name token-service-test -p 5003:5003 token-service:latest
-          # Wait for container to start
-          sleep 10
-          # Test health endpoint
-          curl -f http://localhost:5003/health || exit 1
+          # Wait for container to start (with retries)
+          echo "Waiting for container to start..."
+          for i in {1..15}; do
+            if curl -f http://localhost:5003/health 2>/dev/null; then
+              echo "Container is ready!"
+              break
+            fi
+            echo "Attempt $i: Container not ready yet, waiting 3 seconds..."
+            sleep 3
+          done
+          # Final health check
+          curl -f http://localhost:5003/health || (docker logs token-service-test && exit 1)
           # Clean up
           docker stop token-service-test
           docker rm token-service-test
