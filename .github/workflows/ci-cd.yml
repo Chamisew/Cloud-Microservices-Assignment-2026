@@ -1,5 +1,11 @@
 name: Build and Push to Azure
 
+# Why the live site may not update after a successful push:
+# Pushing a new image to ACR with tag ":latest" does NOT automatically restart Azure App Service /
+# Container Instances. The platform often caches the previous digest until you restart the app or
+# enable ACR continuous deployment. Optionally set repo Variables + AZURE_CREDENTIALS secret below
+# so this workflow restarts the frontend Web App after push.
+
 # Triggers:
 # - push to main → build changed services and push to ACR.
 # - pull_request targeting main → same (same-repo PRs only for ACR; fork PRs skip).
@@ -55,10 +61,45 @@ jobs:
 
       - name: Build ${{ matrix.service }} Image
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true'
-        run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest ./${{ matrix.service }}
+        run: |
+          REG="${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}"
+          IMG="$REG/${{ matrix.service }}"
+          docker build -t "$IMG:latest" -t "$IMG:${{ github.sha }}" ./${{ matrix.service }}
 
       - name: Push ${{ matrix.service }} Image
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true'
+<<<<<<< HEAD
+        run: |
+          REG="${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}"
+          IMG="$REG/${{ matrix.service }}"
+          docker push "$IMG:latest"
+          docker push "$IMG:${{ github.sha }}"
+
+  # Optional: restart Linux Web App for Containers so it pulls the new :latest digest.
+  # GitHub repo → Settings → Secrets and variables → Actions:
+  #   Secret:  AZURE_CREDENTIALS (service principal JSON from `az ad sp create-for-rbac`)
+  #   Variables: AZURE_FRONTEND_WEBAPP_NAME, AZURE_RESOURCE_GROUP
+  # Omit variables to skip this job (you must restart the app manually or use Deployment Center CD).
+  restart-azure-frontend:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: >
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      vars.AZURE_FRONTEND_WEBAPP_NAME != '' &&
+      vars.AZURE_RESOURCE_GROUP != ''
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Restart frontend Web App
+        run: |
+          az webapp restart \
+            --name "${{ vars.AZURE_FRONTEND_WEBAPP_NAME }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+=======
         run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest
 
       - name: Trigger Azure Container App Restart
@@ -67,3 +108,4 @@ jobs:
           echo "Image pushed successfully to ACR"
           echo "If Azure Container Apps is configured with auto-deploy, it will pick up the new image automatically"
           echo "Container App will restart within 1-2 minutes"
+>>>>>>> b83507254935a40104f515f1b6802e2e47bc4ed1
