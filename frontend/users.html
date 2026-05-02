@@ -34,6 +34,62 @@
                         </div>
                     </div>
                     <div class="flex items-center space-x-4">
+                        <!-- Notification Bell -->
+                        <div class="relative">
+                            <button @click="showNotifications = !showNotifications" class="relative p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+                                <i class="fas fa-bell text-lg"></i>
+                                <span v-if="unreadCount > 0" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                    {{ unreadCount > 9 ? '9+' : unreadCount }}
+                                </span>
+                            </button>
+                            
+                            <!-- Notification Dropdown -->
+                            <div v-if="showNotifications" class="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+                                <div class="bg-gradient-to-r from-indigo-500 to-purple-600 p-4 text-white">
+                                    <h3 class="font-bold text-sm">Notifications</h3>
+                                    <p class="text-xs opacity-80">{{ unreadCount }} unread</p>
+                                </div>
+                                <div class="max-h-96 overflow-y-auto">
+                                    <div v-if="userNotifications.length === 0" class="p-8 text-center text-slate-400">
+                                        <i class="fas fa-bell-slash text-3xl mb-2"></i>
+                                        <p class="text-sm">No notifications yet</p>
+                                    </div>
+                                    <div v-else>
+                                        <div v-for="notif in userNotifications.slice(0, 5)" :key="notif.notification_id" 
+                                             class="p-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                                             :class="{'bg-indigo-50': !notif.read}">
+                                            <div class="flex items-start space-x-3">
+                                                <div class="flex-shrink-0">
+                                                    <div class="w-8 h-8 rounded-full flex items-center justify-center"
+                                                         :class="{
+                                                             'bg-green-100 text-green-600': notif.type.includes('generated'),
+                                                             'bg-amber-100 text-amber-600': notif.type.includes('called'),
+                                                             'bg-red-100 text-red-600': notif.type.includes('cancelled')
+                                                         }">
+                                                        <i class="fas" :class="{
+                                                            'fa-check': notif.type.includes('generated'),
+                                                            'fa-bullhorn': notif.type.includes('called'),
+                                                            'fa-times': notif.type.includes('cancelled')
+                                                        }"></i>
+                                                    </div>
+                                                </div>
+                                                <div class="flex-1 min-w-0">
+                                                    <p class="text-sm font-semibold text-slate-800 truncate">{{ notif.queue_name }}</p>
+                                                    <p class="text-xs text-slate-500 mt-1">{{ notif.message }}</p>
+                                                    <p class="text-[10px] text-slate-400 mt-1">{{ formatDate(notif.created_at) }}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="p-3 bg-slate-50 border-t border-slate-200 text-center">
+                                    <a href="notifications.html" class="text-xs font-bold text-indigo-600 hover:text-indigo-700">
+                                        View All Notifications <i class="fas fa-arrow-right ml-1"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <a href="index.html" class="text-sm font-bold text-slate-500 hover:text-indigo-600 transition-colors">
                             <i class="fas fa-arrow-left mr-2"></i>Back to Dashboard
                         </a>
@@ -304,7 +360,7 @@
     </div>
 
     <script>
-        const { createApp, ref, onMounted, computed } = Vue;
+        const { createApp, ref, onMounted, computed, onUnmounted } = Vue;
         const API = 'https://api-gateway.nicebay-5c116edb.eastasia.azurecontainerapps.io/api';
         // const API = 'http://localhost:8080/api';
 
@@ -317,6 +373,23 @@
                 const queues = ref([]);
                 const selectedUser = ref(null);
                 const searchQuery = ref('');
+                const showNotifications = ref(false);
+                const userNotifications = ref([]);
+
+                // Close notification dropdown when clicking outside
+                const handleClickOutside = (event) => {
+                    if (showNotifications.value && !event.target.closest('.relative')) {
+                        showNotifications.value = false;
+                    }
+                };
+
+                onMounted(() => {
+                    document.addEventListener('click', handleClickOutside);
+                });
+
+                onUnmounted(() => {
+                    document.removeEventListener('click', handleClickOutside);
+                });
 
                 const filteredUsers = computed(() => {
                     if (!searchQuery.value) return users.value;
@@ -325,6 +398,10 @@
                         u.name.toLowerCase().includes(q) || 
                         u.email.toLowerCase().includes(q)
                     );
+                });
+
+                const unreadCount = computed(() => {
+                    return userNotifications.value.filter(n => !n.read).length;
                 });
 
                 const modals = ref({
@@ -365,10 +442,23 @@
                         users.value = u.data.users || [];
                         queues.value = q.data.queues || [];
                         await checkHealth();
+                        
+                        // Fetch notifications
+                        await fetchNotifications();
                     } catch (e) {
                         showToast('Failed to connect to API Gateway', 'error');
                     } finally {
                         loading.value = false;
+                    }
+                };
+
+                const fetchNotifications = async () => {
+                    try {
+                        const response = await axios.get(`${API}/notifications?limit=20`);
+                        userNotifications.value = response.data.notifications || [];
+                    } catch (e) {
+                        console.error('Failed to fetch notifications:', e);
+                        userNotifications.value = [];
                     }
                 };
 
@@ -445,6 +535,7 @@
 
                 return {
                     loading, submitting, health, users, queues, modals, forms, toast, selectedUser, searchQuery, filteredUsers,
+                    showNotifications, userNotifications, unreadCount,
                     refreshData, openEditModal, updateUser, deleteUser,
                     openJoinModal, joinQueueViaUser, openTokenModal, generateTokenViaUser, updateQueueName, formatDate
                 };
