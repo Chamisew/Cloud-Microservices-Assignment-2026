@@ -1,9 +1,13 @@
 name: Build and Push to Azure
 
+# Pushes to ACR only when files under each service folder change (see paths-filter), unless you run
+# "workflow_dispatch" which rebuilds every matrix service (useful after changing only workflows or .env).
 on:
   push:
     branches:
       - main
+      - develop
+  workflow_dispatch:
 
 jobs:
   build-and-push:
@@ -41,9 +45,9 @@ jobs:
               - '${{ matrix.service }}/**'
 
       - name: Build ${{ matrix.service }} Image
-        if: steps.changes.outputs.service == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true'
         run: docker build -t ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest ./${{ matrix.service }}
 
       - name: Push ${{ matrix.service }} Image
-        if: steps.changes.outputs.service == 'true'
+        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true'
         run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest
