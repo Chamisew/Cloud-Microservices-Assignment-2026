@@ -72,10 +72,18 @@ jobs:
           cd user-service
           pylint *.py --disable=R,C,W1203,W0718,W0719 || true
 
-  # Docker Build and Test Job
+  # ✅ FIXED Docker Build and Test Job
   docker-build:
     runs-on: ubuntu-latest
     needs: [security-scan, code-quality]
+
+    # ✅ ADD MongoDB service
+    services:
+      mongodb:
+        image: mongo:5.0
+        ports:
+          - 27017:27017
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -91,11 +99,15 @@ jobs:
       - name: Test Docker container
         run: |
           cd user-service
+
+          # ✅ FIXED connection string (use service name)
           docker run -d --name user-service-test \
             -p 5001:5001 \
-            -e MONGO_URI=mongodb://localhost:27017/test_db \
+            -e MONGO_URI=mongodb://mongodb:27017/test_db \
             user-service:latest
+
           echo "Waiting for container to start..."
+
           for i in {1..15}; do
             if curl -f http://localhost:5001/health 2>/dev/null; then
               echo "Container is ready!"
@@ -104,11 +116,14 @@ jobs:
             echo "Attempt $i: Container not ready yet, waiting 3 seconds..."
             sleep 3
           done
+
+          # Final check
           curl -f http://localhost:5001/health || (docker logs user-service-test && exit 1)
+
           docker stop user-service-test
           docker rm user-service-test
 
-  # Docker Push Job (only on main branch)
+  # Docker Push Job
   docker-push:
     runs-on: ubuntu-latest
     needs: docker-build
@@ -132,7 +147,7 @@ jobs:
           docker build -t ${{ secrets.DOCKER_USERNAME }}/user-service:latest .
           docker push ${{ secrets.DOCKER_USERNAME }}/user-service:latest
 
-  # Integration Test Job
+  # Integration Test Job (already correct)
   integration-test:
     runs-on: ubuntu-latest
     needs: docker-build
@@ -141,11 +156,6 @@ jobs:
         image: mongo:5.0
         ports:
           - 27017:27017
-        options: >-
-          --health-cmd mongo
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -176,15 +186,14 @@ jobs:
           name: user-service-coverage
         if: always()
 
-  # Deployment Job
+  # Deployment Jobs
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [docker-push, integration-test]
     if: github.ref == 'refs/heads/develop'
     steps:
       - name: Deploy to Staging
-        run: |
-          echo "Deploying to staging environment..."
+        run: echo "Deploying to staging environment..."
 
   deploy-production:
     runs-on: ubuntu-latest
@@ -192,5 +201,4 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Deploy to Production
-        run: |
-          echo "Deploying to production environment..."
+        run: echo "Deploying to production environment..."
