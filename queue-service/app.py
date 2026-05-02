@@ -468,6 +468,20 @@ def get_queue(queue_id):
         queue['created_at'] = queue['created_at'].isoformat()
         queue['updated_at'] = queue['updated_at'].isoformat()
         
+        # Fetch users currently assigned to this queue
+        assignments_cursor = queue_assignments_collection.find(
+            {'queue_id': queue_id, 'status': 'waiting'}
+        ).sort('joined_at', 1)
+        
+        assignments = []
+        for a in assignments_cursor:
+            a['_id'] = str(a['_id'])
+            if 'joined_at' in a and hasattr(a['joined_at'], 'isoformat'):
+                a['joined_at'] = a['joined_at'].isoformat()
+            assignments.append(a)
+            
+        queue['assignments'] = assignments
+        
         # Calculate occupancy percentage
         if queue['max_capacity'] > 0:
             queue['occupancy_percentage'] = round(
