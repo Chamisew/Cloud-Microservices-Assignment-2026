@@ -130,10 +130,6 @@
                                     <div class="text-xs text-gray-400 uppercase">Current</div>
                                     <div class="text-xl font-bold text-indigo-600">{{ queue.current_count }}</div>
                                 </div>
-                                <div class="bg-gray-50 p-2 rounded-lg text-center">
-                                    <div class="text-xs text-gray-400 uppercase">Wait Time</div>
-                                    <div class="text-xl font-bold text-amber-500">{{ queue.average_wait_time }}m</div>
-                                </div>
                             </div>
                             <div class="flex justify-end space-x-3">
                                 <button @click="deleteItem('queue', queue.id || queue._id)" class="text-red-500 text-sm font-medium hover:underline">Delete</button>
