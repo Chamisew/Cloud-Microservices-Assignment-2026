@@ -318,7 +318,7 @@
                     submitting.value = true;
                     try {
                         // Using the enhanced /users/register endpoint
-                        await axios.post('https://api-gateway.nicebay-5c116edb.eastasia.azurecontainerapps.io/api/users/register', forms.value.register);
+                        await axios.post(`${API.replace('/api', '')}/users/register`, forms.value.register);
                         showToast('User registered successfully');
                         forms.value.register = { name: '', email: '', phone: '' };
                         refreshData();
