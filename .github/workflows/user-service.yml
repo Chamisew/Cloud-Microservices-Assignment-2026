@@ -100,10 +100,14 @@ jobs:
         run: |
           cd user-service
 
-          # ✅ FIXED connection string (use service name)
+          # MongoDB runs as a GitHub Actions service on the runner host (ports published to localhost).
+          # This app container is on the default bridge network, so hostnames like "mongodb" do not
+          # resolve here — only runner steps on the VM can use localhost:27017. Map host.docker.internal
+          # to the gateway so the container reaches MongoDB the same way as integration-test on the host.
           docker run -d --name user-service-test \
+            --add-host=host.docker.internal:host-gateway \
             -p 5001:5001 \
-            -e MONGO_URI=mongodb://mongodb:27017/test_db \
+            -e MONGO_URI=mongodb://host.docker.internal:27017/test_db \
             user-service:latest
 
           echo "Waiting for container to start..."
