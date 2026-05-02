@@ -81,7 +81,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
         run: |
@@ -91,9 +91,10 @@ jobs:
       - name: Test Docker container
         run: |
           cd user-service
-          # Run container in background
-          docker run -d --name user-service-test -p 5001:5001 user-service:latest
-          # Wait for container to start (with retries)
+          docker run -d --name user-service-test \
+            -p 5001:5001 \
+            -e MONGO_URI=mongodb://localhost:27017/test_db \
+            user-service:latest
           echo "Waiting for container to start..."
           for i in {1..15}; do
             if curl -f http://localhost:5001/health 2>/dev/null; then
@@ -103,9 +104,7 @@ jobs:
             echo "Attempt $i: Container not ready yet, waiting 3 seconds..."
             sleep 3
           done
-          # Final health check
           curl -f http://localhost:5001/health || (docker logs user-service-test && exit 1)
-          # Clean up
           docker stop user-service-test
           docker rm user-service-test
 
@@ -116,13 +115,13 @@ jobs:
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
-        uses: uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -149,7 +148,7 @@ jobs:
           --health-retries 5
     steps:
       - name: Checkout code
-        uses: uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -165,10 +164,8 @@ jobs:
       - name: Run integration tests
         run: |
           cd user-service
-          # Set environment variables for testing
           export MONGO_URI="mongodb://localhost:27017/test_db"
           export FLASK_ENV=test
-          # Run tests (create test file separately)
           python -m pytest tests/ -v --cov=app --cov-report=xml || true
 
       - name: Upload coverage to Codecov
@@ -179,7 +176,7 @@ jobs:
           name: user-service-coverage
         if: always()
 
-  # Deployment Job (example for different environments)
+  # Deployment Job
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [docker-push, integration-test]
@@ -188,9 +185,7 @@ jobs:
       - name: Deploy to Staging
         run: |
           echo "Deploying to staging environment..."
-          # Add your deployment logic here
-          # Example: kubectl apply -f k8s/staging/
-          
+
   deploy-production:
     runs-on: ubuntu-latest
     needs: [docker-push, integration-test]
@@ -199,5 +194,3 @@ jobs:
       - name: Deploy to Production
         run: |
           echo "Deploying to production environment..."
-          # Add your production deployment logic here
-          # Example: kubectl apply -f k8s/production/
