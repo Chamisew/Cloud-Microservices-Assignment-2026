@@ -36,7 +36,7 @@ jobs:
           bandit -r . -f json -o bandit-report.json || true
 
       - name: Upload Bandit Report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bandit-security-report
           path: notification-service/bandit-report.json
@@ -169,7 +169,7 @@ jobs:
           python -m pytest tests/ -v --cov=app --cov-report=xml || true
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./notification-service/coverage.xml
           flags: unittests
