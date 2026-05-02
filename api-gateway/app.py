@@ -83,10 +83,7 @@ def forward_request(service_key, path, method, headers=None, data=None, params=N
         logger.error(f"Service URL not configured for: {service_key}")
         return {'error': f'Service URL not configured for {service_key}'}, 500, {}
     
-    # Strip /api prefix before forwarding to backend services
-    # Frontend calls: /api/users, backend expects: /users
-    service_path = path.replace('/api', '', 1) if path.startswith('/api') else path
-    target_url = f"{service_url}{service_path}"
+    target_url = f"{service_url}{path}"
     logger.info(f"Forwarding {path} -> {target_url}")
     
     forward_headers = {}
