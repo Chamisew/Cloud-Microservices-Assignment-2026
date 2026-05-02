@@ -68,6 +68,7 @@ jobs:
 
       - name: Push ${{ matrix.service }} Image
         if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true'
+<<<<<<< HEAD
         run: |
           REG="${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}"
           IMG="$REG/${{ matrix.service }}"
@@ -98,3 +99,13 @@ jobs:
           az webapp restart \
             --name "${{ vars.AZURE_FRONTEND_WEBAPP_NAME }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}"
+=======
+        run: docker push ${{ secrets.AZURE_REGISTRY_LOGIN_SERVER }}/${{ matrix.service }}:latest
+
+      - name: Trigger Azure Container App Restart
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || steps.changes.outputs.service == 'true')
+        run: |
+          echo "Image pushed successfully to ACR"
+          echo "If Azure Container Apps is configured with auto-deploy, it will pick up the new image automatically"
+          echo "Container App will restart within 1-2 minutes"
+>>>>>>> b83507254935a40104f515f1b6802e2e47bc4ed1
