@@ -50,33 +50,92 @@
                 
                 <!-- Sidebar: Registration & Stats -->
                 <div class="lg:col-span-4 space-y-8">
-                    <!-- Registration Card -->
-                    <section class="bg-white rounded-3xl shadow-sm border border-slate-200 p-8">
-                        <h2 class="text-lg font-bold mb-6 flex items-center">
-                            <i class="fas fa-user-plus text-indigo-500 mr-3"></i>Register User
-                        </h2>
-                        <form @submit.prevent="registerUser" class="space-y-4">
-                            <div>
-                                <label class="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Full Name</label>
-                                <input v-model="forms.register.name" type="text" required placeholder="Jane Cooper" 
-                                    class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 transition-all outline-none">
+                    <!-- System Overview Card -->
+                    <section class="bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 rounded-3xl shadow-xl p-8 text-white relative overflow-hidden">
+                        <!-- Decorative background elements -->
+                        <div class="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-16 -mt-16"></div>
+                        <div class="absolute bottom-0 left-0 w-24 h-24 bg-white opacity-10 rounded-full -ml-12 -mb-12"></div>
+                        
+                        <div class="relative z-10">
+                            <div class="flex items-center mb-6">
+                                <div class="bg-white bg-opacity-20 backdrop-blur-sm p-3 rounded-2xl mr-4">
+                                    <i class="fas fa-layer-group text-2xl"></i>
+                                </div>
+                                <div>
+                                    <h2 class="text-xl font-black">Smart Queue System</h2>
+                                    <p class="text-xs font-bold uppercase tracking-wider opacity-80">Microservices Architecture</p>
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Email Address</label>
-                                <input v-model="forms.register.email" type="email" required placeholder="jane@example.com"
-                                    class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 transition-all outline-none">
+                            
+                            <div class="space-y-4 text-sm">
+                                <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-server text-indigo-200 mt-1 mr-3"></i>
+                                        <div>
+                                            <h3 class="font-bold mb-1">API Gateway</h3>
+                                            <p class="text-xs opacity-90 leading-relaxed">Central routing hub that directs requests to appropriate microservices</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-users text-indigo-200 mt-1 mr-3"></i>
+                                        <div>
+                                            <h3 class="font-bold mb-1">User Service</h3>
+                                            <p class="text-xs opacity-90 leading-relaxed">Manages user accounts, profiles, and authentication (Port 5001)</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-list-ol text-indigo-200 mt-1 mr-3"></i>
+                                        <div>
+                                            <h3 class="font-bold mb-1">Queue Service</h3>
+                                            <p class="text-xs opacity-90 leading-relaxed">Handles queue creation, management, and assignments (Port 5002)</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-ticket-alt text-indigo-200 mt-1 mr-3"></i>
+                                        <div>
+                                            <h3 class="font-bold mb-1">Token Service</h3>
+                                            <p class="text-xs opacity-90 leading-relaxed">Issues and manages queue tokens for waiting customers (Port 5003)</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-xl p-4">
+                                    <div class="flex items-start">
+                                        <i class="fas fa-bell text-indigo-200 mt-1 mr-3"></i>
+                                        <div>
+                                            <h3 class="font-bold mb-1">Notification Service</h3>
+                                            <p class="text-xs opacity-90 leading-relaxed">Sends real-time updates and alerts to users (Port 5004)</p>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-1.5 ml-1">Phone (+94...)</label>
-                                <input v-model="forms.register.phone" type="tel" required placeholder="+94771234567"
-                                    class="w-full bg-slate-50 border-0 ring-1 ring-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 transition-all outline-none">
+                            
+                            <div class="mt-6 pt-6 border-t border-white border-opacity-20">
+                                <div class="flex items-center justify-between text-xs">
+                                    <div class="flex items-center">
+                                        <i class="fas fa-database mr-2 opacity-80"></i>
+                                        <span>MongoDB</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <i class="fas fa-cloud mr-2 opacity-80"></i>
+                                        <span>Azure Container Apps</span>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <i class="fas fa-shield-alt mr-2 opacity-80"></i>
+                                        <span>REST API</span>
+                                    </div>
+                                </div>
                             </div>
-                            <button type="submit" :disabled="submitting"
-                                class="w-full gradient-bg text-white font-bold py-4 rounded-xl shadow-indigo-200 shadow-xl hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
-                                <span v-if="submitting">Processing...</span>
-                                <span v-else>Register User</span>
-                            </button>
-                        </form>
+                        </div>
                     </section>
 
                     <!-- Quick Lookup Card -->
@@ -275,7 +334,6 @@
                 });
 
                 const forms = ref({
-                    register: { name: '', email: '', phone: '' },
                     edit: { name: '', email: '', phone: '' },
                     join: { queue_id: '', service_type: 'general' },
                     token: { queue_id: '', queue_name: '' }
@@ -311,21 +369,6 @@
                         showToast('Failed to connect to API Gateway', 'error');
                     } finally {
                         loading.value = false;
-                    }
-                };
-
-                const registerUser = async () => {
-                    submitting.value = true;
-                    try {
-                        // Using the enhanced /users/register endpoint
-                        await axios.post(`${API.replace('/api', '')}/users/register`, forms.value.register);
-                        showToast('User registered successfully');
-                        forms.value.register = { name: '', email: '', phone: '' };
-                        refreshData();
-                    } catch (e) {
-                        showToast(e.response?.data?.error || 'Registration failed', 'error');
-                    } finally {
-                        submitting.value = false;
                     }
                 };
 
@@ -402,7 +445,7 @@
 
                 return {
                     loading, submitting, health, users, queues, modals, forms, toast, selectedUser, searchQuery, filteredUsers,
-                    refreshData, registerUser, openEditModal, updateUser, deleteUser,
+                    refreshData, openEditModal, updateUser, deleteUser,
                     openJoinModal, joinQueueViaUser, openTokenModal, generateTokenViaUser, updateQueueName, formatDate
                 };
             }
